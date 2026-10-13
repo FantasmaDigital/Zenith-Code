@@ -1,0 +1,46 @@
+{
+  "empresa": "Zenith Solutions",
+  "pais": "El Salvador",
+  "moneda": "USD ($)",
+  "servicios": [
+    {
+      "id": "srv-01",
+      "nombre": "Desarrollo Web Corporativo",
+      "descripcion": "Diseño y desarrollo de sitios web modernos, rápidos y optimizados para SEO y móviles.",
+      "precio_base": "$450.00 USD",
+      "tiempo_entrega": "10 a 15 días hábiles",
+      "incluye": [
+        "Hasta 5 secciones personalizadas",
+        "Diseño responsivo móvil y desktop",
+        "Integración con WhatsApp y formulario de contacto",
+        "Certificado SSL y hosting por 1 año"
+      ]
+    },
+    {
+      "id": "srv-02",
+      "nombre": "Automatización con Chatbots e IA",
+      "descripcion": "Implementación de agentes inteligentes para WhatsApp y web con integración a CRM y bases de datos.",
+      "precio_base": "$600.00 USD",
+      "tiempo_entrega": "7 a 12 días hábiles",
+      "incluye": [
+        "Conexión con WhatsApp Cloud API",
+        "Calificación automática de prospectos",
+        "Derivación a asesores humanos",
+        "Panel de métricas básicas"
+      ]
+    },
+    {
+      "id": "srv-03",
+      "nombre": "Mantenimiento y Soporte Técnico Mensual",
+      "descripcion": "Monitoreo preventivo, copias de seguridad y soporte técnico continuo para plataformas digitales.",
+      "precio_base": "$120.00 USD / mes",
+      "tiempo_entrega": "Disponibilidad inmediata",
+      "incluye": [
+        "Monitoreo 24/7",
+        "Actualizaciones de seguridad",
+        "Hasta 5 horas de ajustes técnicos mensuales"
+      ]
+    }
+  ],
+  "disponibilidad_general": "Lunes a viernes de 8:00 AM a 6:00 PM (Sábados de 8:00 AM a 12:00 MD para llamadas programadas)."
+}

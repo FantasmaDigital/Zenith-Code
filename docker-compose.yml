@@ -1,0 +1,83 @@
+services:
+  # ==========================================================
+  # 1. ASISTENTE OPERATIVO IA (FASTAPI + GEMINI / OPENAI)
+  # ==========================================================
+  python-backend:
+    build:
+      context: ./backend-python
+      dockerfile: Dockerfile
+    container_name: zenith-python-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      - COMPANY_NAME=${COMPANY_NAME:-Zenith Solutions}
+      - AI_PROVIDER=${AI_PROVIDER:-gemini}
+      - GEMINI_API_KEY=${GEMINI_API_KEY}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - WHATSAPP_GATEWAY_URL=http://whatsapp-gateway:3000
+      - DATABASE_URL=postgresql://zenith:zenith_password_2026@postgres:5432/zenith_knowledge
+      - HOST=0.0.0.0
+      - PORT=8000
+    volumes:
+      - ./backend-python:/app
+    depends_on:
+      - postgres
+    networks:
+      - zenith-net
+
+  # ==========================================================
+  # 2. MICROSERVICIO IN-HOUSE DE WHATSAPP (BAILEYS MULTI-DEVICE)
+  # ==========================================================
+  whatsapp-gateway:
+    build:
+      context: ./whatsapp-gateway
+      dockerfile: Dockerfile
+    container_name: zenith-whatsapp-gateway
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - PYTHON_BACKEND_URL=http://python-backend:8000
+      - AUTH_FOLDER=/app/auth_info_baileys
+      - LOG_LEVEL=info
+      - INITIAL_RECONNECT_DELAY_MS=2000
+      - MAX_RECONNECT_DELAY_MS=30000
+    volumes:
+      - baileys_auth_data:/app/auth_info_baileys
+    depends_on:
+      - python-backend
+    networks:
+      - zenith-net
+
+  # ==========================================================
+  # 3. BASE DE DATOS POSTGRESQL (PERSISTENCIA Y ALTA ESCALA)
+  # ==========================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: zenith-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=zenith
+      - POSTGRES_PASSWORD=zenith_password_2026
+      - POSTGRES_DB=zenith_knowledge
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - zenith-net
+
+networks:
+  zenith-net:
+    driver: bridge
+
+volumes:
+  baileys_auth_data:
+    name: zenith_baileys_auth_data
+  postgres_data:
+    name: zenith_postgres_data

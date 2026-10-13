@@ -1,0 +1,28 @@
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+@layer base {
+  body {
+    background-color: #0c0d12;
+    color: #f3f4f6;
+    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Custom sleek Supabase scrollbars */
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #1f2330;
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #3ecf8e;
+}
