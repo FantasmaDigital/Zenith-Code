@@ -44,6 +44,7 @@ class ChatResponse(BaseModel):
     session_id: str
     reply: str
     transferred_to_human: bool
+    human_handoff_active: bool = False
 
 class SendMessageRequest(BaseModel):
     to: str = Field(..., description="Número de teléfono de destino (ej. 50371234567)")
@@ -76,15 +77,52 @@ class UpdateSettingsRequest(BaseModel):
     gemini_model: Optional[str] = Field(None, description="Modelo de Gemini")
     openai_api_key: Optional[str] = Field(None, description="API Key de OpenAI")
     openai_model: Optional[str] = Field(None, description="Modelo de OpenAI")
+    whatsapp_gateway_url: Optional[str] = Field(None, description="URL del WhatsApp Gateway")
+    company_logo: Optional[str] = Field(None, description="Logo de la empresa en base64 o URL")
+    bot_avatar: Optional[str] = Field(None, description="Avatar del asistente en base64 o URL")
+    primary_color: Optional[str] = Field(None, description="Color de acento de marca (Hex)")
+    welcome_message: Optional[str] = Field(None, description="Mensaje de bienvenida inicial")
+    transfer_message: Optional[str] = Field(None, description="Mensaje de derivación a humano")
+    support_phone: Optional[str] = Field(None, description="Teléfono oficial de soporte/ventas")
+    website_url: Optional[str] = Field(None, description="Sitio web oficial de la marca")
+    handoff_inactivity_hours: Optional[float] = Field(None, description="Horas de inactividad para reanudar IA tras transferir a humano", ge=0.1, le=168.0)
+
+class PauseHandoffRequest(BaseModel):
+    session_id: str = Field(..., description="ID de sesión o número de WhatsApp")
+    reason: Optional[str] = Field(default="Pausado manualmente desde el portal", description="Motivo de la pausa")
+    tag: Optional[str] = Field(default="ATENCIÓN HUMANA", description="Etiqueta de categorización directa")
+    notes: Optional[str] = Field(default="", description="Nota ejecutiva para el asesor")
+
+class UpdateHandoffMetaRequest(BaseModel):
+    tag: Optional[str] = Field(None, description="Nueva etiqueta del chat")
+    notes: Optional[str] = Field(None, description="Nueva nota para el asesor")
+
+@app.on_event("startup")
+def startup_event():
+    """Garantiza la sincronización de tablas y persistencia de settings al arrancar."""
+    logger.info("Iniciando Asistente Operativo...")
+    settings.load_db_overrides()
+    logger.info("✅ Ajustes de marca, modelos y API keys sincronizados con la Base de Datos.")
 
 @app.get("/")
 def read_root():
+    settings.load_db_overrides()
     gateway_status = whatsapp_service.get_status()
     kb_stats = knowledge_service.get_stats()
+    effective_phone = settings.get_effective_support_phone()
     return {
         "status": "online",
-        "agent": "Asistente Operativo",
+        "agent": settings.BOT_NAME,
         "company": settings.COMPANY_NAME,
+        "company_name": settings.COMPANY_NAME,
+        "company_logo": settings.COMPANY_LOGO,
+        "bot_avatar": settings.BOT_AVATAR,
+        "primary_color": settings.PRIMARY_COLOR,
+        "welcome_message": settings.WELCOME_MESSAGE,
+        "support_phone": settings.SUPPORT_PHONE,
+        "effective_support_phone": effective_phone,
+        "handoff_inactivity_hours": settings.HANDOFF_INACTIVITY_HOURS,
+        "website_url": settings.WEBSITE_URL,
         "active_provider": ai_service.provider,
         "active_model": ai_service.active_model,
         "knowledge_engine": {
@@ -216,7 +254,9 @@ def get_knowledge_stats():
 # ==============================================================
 @app.get("/api/settings")
 def get_app_settings():
-    """Devuelve la configuración de marca, proveedor y claves de IA."""
+    """Devuelve la configuración de marca, proveedor y claves de IA directamente sincronizada con la BD."""
+    settings.load_db_overrides()
+    kb_stats = knowledge_service.get_stats()
     return {
         "company_name": settings.COMPANY_NAME,
         "bot_name": settings.BOT_NAME,
@@ -226,12 +266,25 @@ def get_app_settings():
         "gemini_api_key": settings.GEMINI_API_KEY,
         "gemini_model": settings.GEMINI_MODEL,
         "openai_api_key": settings.OPENAI_API_KEY,
-        "openai_model": settings.OPENAI_MODEL
+        "openai_model": settings.OPENAI_MODEL,
+        "whatsapp_gateway_url": settings.WHATSAPP_GATEWAY_URL,
+        "company_logo": settings.COMPANY_LOGO,
+        "bot_avatar": settings.BOT_AVATAR,
+        "primary_color": settings.PRIMARY_COLOR,
+        "welcome_message": settings.WELCOME_MESSAGE,
+        "transfer_message": settings.TRANSFER_MESSAGE,
+        "support_phone": settings.SUPPORT_PHONE,
+        "effective_support_phone": settings.get_effective_support_phone(),
+        "detected_whatsapp_phone": (whatsapp_service.get_status().get("phone_number") or ""),
+        "handoff_inactivity_hours": settings.HANDOFF_INACTIVITY_HOURS,
+        "website_url": settings.WEBSITE_URL,
+        "database_type": kb_stats["database_type"],
+        "persisted_in_db": True
     }
 
 @app.post("/api/settings")
 def update_app_settings(req: UpdateSettingsRequest):
-    """Actualiza en caliente la configuración de marca, proveedor y API keys."""
+    """Actualiza en caliente la configuración de marca, proveedor y API keys en BD y memoria."""
     updates = {}
     if req.company_name is not None: updates["COMPANY_NAME"] = req.company_name
     if req.bot_name is not None: updates["BOT_NAME"] = req.bot_name
@@ -242,12 +295,21 @@ def update_app_settings(req: UpdateSettingsRequest):
     if req.gemini_model is not None: updates["GEMINI_MODEL"] = req.gemini_model
     if req.openai_api_key is not None: updates["OPENAI_API_KEY"] = req.openai_api_key
     if req.openai_model is not None: updates["OPENAI_MODEL"] = req.openai_model
+    if req.whatsapp_gateway_url is not None: updates["WHATSAPP_GATEWAY_URL"] = req.whatsapp_gateway_url
+    if req.company_logo is not None: updates["COMPANY_LOGO"] = req.company_logo
+    if req.bot_avatar is not None: updates["BOT_AVATAR"] = req.bot_avatar
+    if req.primary_color is not None: updates["PRIMARY_COLOR"] = req.primary_color
+    if req.welcome_message is not None: updates["WELCOME_MESSAGE"] = req.welcome_message
+    if req.transfer_message is not None: updates["TRANSFER_MESSAGE"] = req.transfer_message
+    if req.support_phone is not None: updates["SUPPORT_PHONE"] = req.support_phone
+    if req.website_url is not None: updates["WEBSITE_URL"] = req.website_url
+    if req.handoff_inactivity_hours is not None: updates["HANDOFF_INACTIVITY_HOURS"] = req.handoff_inactivity_hours
 
     settings.update_settings(updates)
     # Refrescar caché de conocimiento por si cambiaron instrucciones de marca
     knowledge_service.refresh_cache()
-    logger.info("⚙️ Configuración de marca e IA actualizada con éxito.")
-    return {"status": "updated", "settings": get_app_settings()}
+    logger.info("⚙️ Configuración de marca e IA guardada exitosamente en la Base de Datos.")
+    return {"status": "updated", "persisted_in_db": True, "settings": get_app_settings()}
 
 # ==============================================================
 # ENDPOINT DE CHAT / PROCESAMIENTO DE IA (USADO POR BAILEYS Y WEB)
@@ -257,11 +319,26 @@ def chat_direct(request: ChatRequest):
     """
     Procesa un mensaje de usuario a través del motor de IA (Gemini / OpenAI),
     inyectando el In-Memory Hot Cache en menos de 1 ms.
+    Si la conversación fue derivada a un humano, la IA no responderá hasta que pasen las horas de inactividad.
     """
     if not request.message.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="El mensaje no puede estar vacío."
+        )
+
+    # Verificar si la conversación está en manos de un agente humano activo
+    is_handoff_active, remaining_hours = lead_service.is_in_human_handoff(request.session_id, touch_activity=True)
+    if is_handoff_active:
+        logger.info(
+            f"⏸️ [Agente Humano Activo] Mensaje de {request.session_id} omitido por la IA. "
+            f"Conversación en manos humanas (Inactividad restante: {remaining_hours:.1f}h). Silencio absoluto sin mensajes al cliente."
+        )
+        return ChatResponse(
+            session_id=request.session_id,
+            reply="",
+            transferred_to_human=True,
+            human_handoff_active=True
         )
 
     reply = ai_service.generate_reply(
@@ -296,6 +373,23 @@ async def receive_gateway_message(request: Request):
 
     logger.info(f"Mensaje entrante de +{from_number}: {user_text}")
 
+    # Verificar si la conversación está en manos de un agente humano activo
+    is_handoff_active, remaining_hours = lead_service.is_in_human_handoff(from_number, touch_activity=True)
+    if is_handoff_active:
+        logger.info(
+            f"⏸️ [Agente Humano Activo] Mensaje de +{from_number} omitido por la IA. "
+            f"Conversación en manos humanas (Inactividad restante: {remaining_hours:.1f}h)."
+        )
+        return JSONResponse(
+            content={
+                "status": "human_handoff_active",
+                "message": f"Conversación en manos de un agente humano. IA en pausa ({remaining_hours:.1f}h de inactividad restantes).",
+                "to": from_number,
+                "inactivity_remaining_hours": round(remaining_hours, 2)
+            },
+            status_code=status.HTTP_200_OK
+        )
+
     reply_text = ai_service.generate_reply(session_id=from_number, user_message=user_text)
     whatsapp_service.send_text_message(to_phone=from_number, message_text=reply_text)
 
@@ -306,8 +400,66 @@ async def receive_gateway_message(request: Request):
     }, status_code=status.HTTP_200_OK)
 
 # ==============================================================
+# GESTIÓN DE AGENTES HUMANOS Y DERIVACIONES (HANDOFF)
+# ==============================================================
+@app.get("/api/handoff/active")
+def get_active_handoffs():
+    """Lista las conversaciones activas derivadas a agentes humanos."""
+    return {
+        "handoff_inactivity_hours": settings.HANDOFF_INACTIVITY_HOURS,
+        "active_handoffs": lead_service.list_active_handoffs()
+    }
+
+@app.post("/api/handoff/{session_id}/release")
+def release_session_handoff(session_id: str):
+    """Reanuda inmediatamente la IA para una sesión transferida."""
+    lead_service.release_handoff(session_id)
+    logger.info(f"▶️ [Handoff Liberado] Sesión {session_id} liberada manualmente. IA reanudada.")
+    return {"status": "released", "session_id": session_id}
+
+@app.post("/api/handoff/release-all")
+def release_all_session_handoffs():
+    """Reanuda inmediatamente la IA para todas las sesiones transferidas en lote."""
+    released_count = lead_service.release_all_handoffs()
+    logger.info(f"▶️ [Handoff Masivo Liberado] {released_count} sesiones liberadas. IA reanudada.")
+    return {"status": "released_all", "count": released_count}
+
+@app.post("/api/handoff/{session_id}/pause")
+def pause_session_handoff(
+    session_id: str,
+    reason: Optional[str] = "Pausado manualmente desde el portal",
+    tag: Optional[str] = "ATENCIÓN HUMANA",
+    notes: Optional[str] = ""
+):
+    """Pausa manualmente la IA para una sesión transferida a humano con tag y nota."""
+    lead_service.pause_handoff(session_id, reason=reason, tag=tag, notes=notes)
+    logger.info(f"⏸️ [Handoff Pausado] Sesión {session_id} pausada manualmente desde el portal (Tag: {tag}).")
+    return {"status": "paused", "session_id": session_id, "reason": reason, "tag": tag, "notes": notes}
+
+@app.post("/api/handoff/pause")
+def pause_session_handoff_body(req: PauseHandoffRequest):
+    """Pausa manualmente la IA recibiendo session_id, reason, tag y notes en el cuerpo JSON."""
+    lead_service.pause_handoff(
+        req.session_id,
+        reason=req.reason or "Pausado manualmente desde el portal",
+        tag=req.tag or "ATENCIÓN HUMANA",
+        notes=req.notes or ""
+    )
+    logger.info(f"⏸️ [Handoff Pausado] Sesión {req.session_id} pausada manualmente (Tag: {req.tag}).")
+    return {"status": "paused", "session_id": req.session_id, "reason": req.reason, "tag": req.tag, "notes": req.notes}
+
+@app.post("/api/handoff/{session_id}/update")
+@app.patch("/api/handoff/{session_id}")
+def update_session_handoff_meta(session_id: str, req: UpdateHandoffMetaRequest):
+    """Actualiza la etiqueta y nota ejecutiva del asesor para una conversación transferida."""
+    updated = lead_service.update_handoff_meta(session_id, tag=req.tag, notes=req.notes)
+    logger.info(f"🏷️ [Handoff Meta Actualizado] Sesión {session_id} -> Tag: {req.tag}")
+    return {"status": "updated" if updated else "noop", "session_id": session_id, "tag": req.tag, "notes": req.notes}
+
+# ==============================================================
 # ENVÍO PROACTIVO DE MENSAJES VÍA GATEWAY
 # ==============================================================
+@app.post("/api/whatsapp/send")
 @app.post("/send")
 def send_message_endpoint(request: SendMessageRequest):
     success = whatsapp_service.send_text_message(
@@ -321,9 +473,21 @@ def send_message_endpoint(request: SendMessageRequest):
         )
     return {"status": "sent", "to": request.to}
 
+@app.get("/api/whatsapp/status")
 @app.get("/gateway-status")
 def check_gateway_status():
     return whatsapp_service.get_status()
+
+@app.get("/api/whatsapp/qr")
+def get_whatsapp_qr():
+    """Devuelve los datos del código QR y estado actual de vinculación."""
+    return whatsapp_service.get_qr()
+
+@app.post("/api/whatsapp/logout")
+def logout_whatsapp():
+    """Desvincula la sesión activa de WhatsApp."""
+    success = whatsapp_service.logout()
+    return {"success": success, "status": "DISCONNECTED"}
 
 # ==============================================================
 # GESTIÓN Y MONITOREO DE SESIONES Y LEADS

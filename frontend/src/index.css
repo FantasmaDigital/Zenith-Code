@@ -2,6 +2,16 @@
 @import "tailwindcss/components";
 @import "tailwindcss/utilities";
 
+:root {
+  --theme-primary: #3ecf8e;
+  --theme-primary-rgb: 62, 207, 142;
+}
+
+::selection {
+  background-color: rgba(var(--theme-primary-rgb), 0.35) !important;
+  color: #ffffff !important;
+}
+
 @layer base {
   body {
     background-color: #0c0d12;
@@ -24,5 +34,111 @@
   border-radius: 9999px;
 }
 *::-webkit-scrollbar-thumb:hover {
-  background: #3ecf8e;
+  background: var(--theme-primary);
+}
+
+/* ==============================================================
+   GLOBAL DYNAMIC THEME OVERRIDES
+   Transforma automáticamente cualquier acento verde (#3ecf8e / emerald)
+   al color de marca seleccionado en tiempo real.
+   ============================================================== */
+
+/* Texto */
+.text-\[\#3ecf8e\],
+.text-emerald-400,
+.text-emerald-500,
+[class*="text-[#3ecf8e]"] {
+  color: var(--theme-primary) !important;
+}
+
+/* Fondos sólidos */
+.bg-\[\#3ecf8e\],
+.bg-emerald-500,
+[class*="bg-[#3ecf8e]"]:not([class*="/"]) {
+  background-color: var(--theme-primary) !important;
+}
+
+/* Bordes sólidos */
+.border-\[\#3ecf8e\],
+.border-emerald-500,
+[class*="border-[#3ecf8e]"]:not([class*="/"]) {
+  border-color: var(--theme-primary) !important;
+}
+
+/* Fondos transparentes / sutiles */
+.bg-\[\#3ecf8e\]\/5,
+.bg-\[\#3ecf8e\]\/10,
+.bg-\[\#3ecf8e\]\/20,
+.bg-emerald-500\/10,
+.bg-emerald-950,
+.bg-emerald-950\/60,
+.bg-emerald-950\/70,
+[class*="bg-[#3ecf8e]/"],
+[class*="bg-emerald-950"] {
+  background-color: rgba(var(--theme-primary-rgb), 0.14) !important;
+}
+
+/* Bordes transparentes / sutiles */
+.border-\[\#3ecf8e\]\/20,
+.border-\[\#3ecf8e\]\/40,
+.border-emerald-500\/20,
+.border-emerald-800,
+.border-emerald-800\/50,
+.border-emerald-800\/60,
+[class*="border-[#3ecf8e]/"],
+[class*="border-emerald-800"] {
+  border-color: rgba(var(--theme-primary-rgb), 0.35) !important;
+}
+
+/* Efectos Hover */
+.hover\:bg-\[\#3ecf8e\]:hover,
+.hover\:bg-emerald-400:hover,
+[class*="hover:bg-[#3ecf8e]"]:hover,
+[class*="hover:bg-emerald-400"]:hover {
+  background-color: var(--theme-primary) !important;
+  filter: brightness(1.12) !important;
+}
+
+.hover\:text-\[\#3ecf8e\]:hover,
+.hover\:text-emerald-400:hover,
+[class*="hover:text-[#3ecf8e]"]:hover {
+  color: var(--theme-primary) !important;
+}
+
+.hover\:border-\[\#3ecf8e\]:hover,
+[class*="hover:border-[#3ecf8e]"]:hover {
+  border-color: var(--theme-primary) !important;
+}
+
+.hover\:bg-\[\#3ecf8e\]\/10:hover,
+.hover\:bg-emerald-900\/60:hover,
+[class*="hover:bg-emerald-900"]:hover {
+  background-color: rgba(var(--theme-primary-rgb), 0.22) !important;
+}
+
+/* Focus en Inputs, Selects y Textareas */
+.focus\:border-\[\#3ecf8e\]:focus,
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--theme-primary) !important;
+  box-shadow: 0 0 0 1px rgba(var(--theme-primary-rgb), 0.35) !important;
+  outline: none !important;
+}
+
+.focus\:ring-\[\#3ecf8e\]:focus {
+  --tw-ring-color: var(--theme-primary) !important;
+}
+
+/* Checkboxes y controles nativos */
+.accent-\[\#3ecf8e\],
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--theme-primary) !important;
+}
+
+/* Sombras y glow */
+.shadow-emerald-950,
+.shadow-emerald-950\/20 {
+  box-shadow: 0 10px 15px -3px rgba(var(--theme-primary-rgb), 0.25) !important;
 }

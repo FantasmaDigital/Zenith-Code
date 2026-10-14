@@ -108,7 +108,7 @@ Copy-Item .env.example .env
 ```
 Edita `.env` con tu clave de Gemini:
 ```ini
-COMPANY_NAME=Zenith Solutions
+COMPANY_NAME=Zenith Studio
 AI_PROVIDER=gemini
 GEMINI_API_KEY=tu_clave_de_google_gemini_aqui
 GEMINI_MODEL=gemini-2.5-flash

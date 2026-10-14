@@ -178,13 +178,15 @@ class WhatsAppSession {
       // Enviar al Asistente Operativo en Python
       const aiResponse = await forwardToPythonBackend(senderPhone, text);
 
-      if (aiResponse && aiResponse.reply) {
+      if (aiResponse && aiResponse.reply && aiResponse.reply.trim().length > 0 && !aiResponse.human_handoff_active) {
         console.log(`[WhatsAppSession] 🤖 Respondiendo a +${senderPhone}...`);
         await this.sendMessage(remoteJid, aiResponse.reply);
 
         if (aiResponse.transferred_to_human) {
           console.log(`[WhatsAppSession] 👨‍💼 Caso transferido a un humano para +${senderPhone}`);
         }
+      } else if (aiResponse && (aiResponse.human_handoff_active || !aiResponse.reply)) {
+        console.log(`[WhatsAppSession] ⏸️ [Silencio] Conversación con +${senderPhone} derivada a humano. La IA permanece en silencio.`);
       }
     }
   }
@@ -230,6 +232,79 @@ class WhatsAppSession {
 
     const result = await this.sock.sendMessage(jid, { text });
     return result;
+  }
+
+  /**
+   * Asigna una etiqueta de WhatsApp Business al chat del cliente.
+   * @param {string} to - Número de teléfono o JID
+   * @param {string} tagName - Nombre de la etiqueta (ej: COTIZACIÓN, ECOMMERCE, AUTOMATIZACIÓN)
+   * @param {number} [colorId] - Código de color opcional (0-19)
+   */
+  async addChatLabel(to, tagName, colorId = null) {
+    if (!this.sock || this.status !== 'CONNECTED') {
+      console.warn(`[WhatsAppSession] No se puede asignar etiqueta: WhatsApp no está conectado (${this.status})`);
+      return false;
+    }
+
+    // Normalizar JID
+    let jid = to;
+    if (!jid.includes('@')) {
+      const cleanDigits = jid.replace(/\D/g, '');
+      jid = `${cleanDigits}@s.whatsapp.net`;
+    }
+
+    const WA_BUSINESS_LABELS = {
+      'COTIZACIÓN': { id: '101', name: 'COTIZACIÓN', color: 4 },
+      'COTIZACION': { id: '101', name: 'COTIZACIÓN', color: 4 },
+      'ECOMMERCE': { id: '102', name: 'ECOMMERCE', color: 1 },
+      'AUTOMATIZACIÓN': { id: '103', name: 'AUTOMATIZACIÓN', color: 2 },
+      'AUTOMATIZACION': { id: '103', name: 'AUTOMATIZACIÓN', color: 2 },
+      'DESARROLLO WEB': { id: '104', name: 'DESARROLLO WEB', color: 5 },
+      'VENTAS': { id: '105', name: 'VENTAS', color: 0 },
+      'SOPORTE TÉCNICO': { id: '106', name: 'SOPORTE TÉCNICO', color: 3 },
+      'SOPORTE TECNICO': { id: '106', name: 'SOPORTE TÉCNICO', color: 3 },
+      'RECLAMO': { id: '107', name: 'RECLAMO', color: 7 },
+      'URGENTE': { id: '108', name: 'URGENTE', color: 8 },
+      'CONSULTA GENERAL': { id: '109', name: 'CONSULTA GENERAL', color: 9 },
+      'ATENCIÓN HUMANA': { id: '110', name: 'ATENCIÓN HUMANA', color: 6 },
+      'ATENCION HUMANA': { id: '110', name: 'ATENCIÓN HUMANA', color: 6 }
+    };
+
+    const cleanTag = (tagName || 'ATENCIÓN HUMANA').trim().toUpperCase();
+    const preset = WA_BUSINESS_LABELS[cleanTag] || {
+      id: String(Math.abs(cleanTag.split('').reduce((acc, c) => ((acc << 5) - acc) + c.charCodeAt(0), 0)) % 1000 + 200),
+      name: cleanTag,
+      color: colorId !== null ? colorId : 4
+    };
+
+    try {
+      // 1. Asegurar que la etiqueta existe o se actualiza en WhatsApp Business
+      if (typeof this.sock.addLabel === 'function') {
+        try {
+          await this.sock.addLabel('', {
+            id: preset.id,
+            name: preset.name,
+            color: preset.color,
+            deleted: false
+          });
+        } catch (labelErr) {
+          // Continuar si la etiqueta ya estaba registrada
+        }
+      }
+
+      // 2. Asociar la etiqueta al chat de WhatsApp Business
+      if (typeof this.sock.addChatLabel === 'function') {
+        await this.sock.addChatLabel(jid, preset.id);
+        console.log(`[WhatsAppSession] 🏷️ Etiqueta "${preset.name}" (ID ${preset.id}) sincronizada en WhatsApp Business para ${jid}`);
+        return true;
+      } else {
+        console.warn('[WhatsAppSession] El socket no expone addChatLabel');
+        return false;
+      }
+    } catch (err) {
+      console.warn(`[WhatsAppSession] Error asignando etiqueta "${cleanTag}" a ${jid}:`, err.message);
+      return false;
+    }
   }
 
   /**

@@ -1,4 +1,4 @@
-# Preguntas Frecuentes (FAQ) - Zenith Solutions
+# Preguntas Frecuentes (FAQ) - Zenith Studio
 
 ### ¿Trabajan con empresas fuera de San Salvador?
 Sí, atendemos a clientes en los 14 departamentos de El Salvador y también clientes en el extranjero en modalidad 100% remota.

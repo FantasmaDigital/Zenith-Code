@@ -11,7 +11,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - COMPANY_NAME=${COMPANY_NAME:-Zenith Solutions}
+      - COMPANY_NAME=${COMPANY_NAME:-Fantasma Digital}
       - AI_PROVIDER=${AI_PROVIDER:-gemini}
       - GEMINI_API_KEY=${GEMINI_API_KEY}
       - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
@@ -48,6 +48,7 @@ services:
       - INITIAL_RECONNECT_DELAY_MS=2000
       - MAX_RECONNECT_DELAY_MS=30000
     volumes:
+      - ./whatsapp-gateway/src:/app/src
       - baileys_auth_data:/app/auth_info_baileys
     depends_on:
       - python-backend
@@ -69,6 +70,27 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - zenith-net
+
+  # ==========================================================
+  # 4. INTERFAZ WEB / DASHBOARD (REACT + VITE)
+  # ==========================================================
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: zenith-frontend
+    restart: unless-stopped
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_BASE=http://localhost:8000
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    depends_on:
+      - python-backend
     networks:
       - zenith-net
 

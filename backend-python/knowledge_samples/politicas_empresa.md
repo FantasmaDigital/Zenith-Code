@@ -1,4 +1,4 @@
-# Políticas y Condiciones Comerciales de Zenith Solutions
+# Políticas y Condiciones Comerciales de Zenith Studio
 
 ## 1. Métodos de Pago
 - Transferencia bancaria local en El Salvador (Banco Agrícola, BAC Credomatic, Cuscatlán, Davivienda).

@@ -17,6 +17,10 @@ def fix_mojibake(text: Optional[str]) -> str:
     if not text:
         return ""
 
+    # No alterar cadenas de imágenes o archivos en base64
+    if text.startswith("data:") or ";base64," in text:
+        return text
+
     s = text
 
     # Si se detecta alguno de los patrones de mojibake típicos
