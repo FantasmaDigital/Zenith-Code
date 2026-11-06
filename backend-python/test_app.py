@@ -1,7 +1,6 @@
 import unittest
 from unittest.mock import patch
-from fastapi.testclient import TestClient
-from main import app
+from tests.fixtures import get_test_client
 from services.knowledge_service import knowledge_service
 from services.lead_service import lead_service
 from services.whatsapp_service import whatsapp_service
@@ -12,7 +11,7 @@ from services.db_service import db_service
 
 class TestAsistenteOperativo(unittest.TestCase):
     def setUp(self):
-        self.client = TestClient(app)
+        self.client = get_test_client()
 
     def test_knowledge_base_loaded(self):
         # Validar que el hot cache se obtiene sin errores y opera como string
@@ -85,7 +84,7 @@ class TestAsistenteOperativo(unittest.TestCase):
 
         # Simular que el proveedor principal falla con error de cuota o conexión
         with patch.object(ai_service, "_call_engine") as mock_engine:
-            def side_effect(engine_name, sid, msg):
+            def side_effect(engine_name, sid, msg="", *args, **kwargs):
                 if engine_name == ai_service.primary_provider:
                     raise RuntimeError("Error de cuota 429 en proveedor principal")
                 return "Respuesta generada por el proveedor de respaldo"

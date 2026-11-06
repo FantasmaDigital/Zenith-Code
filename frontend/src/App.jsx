@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   BookOpen,
+  Boxes,
+  UtensilsCrossed,
   PlusCircle,
   Globe,
   MessageSquare,
@@ -50,10 +52,83 @@ import {
   Check,
   Tag,
   FileText,
-  Edit3
+  Edit3,
+  Mic,
+  MicOff,
+  Paperclip,
+  ChevronDown,
+  Kanban,
+  ClipboardList,
+  BarChart3,
+  FileCode2,
+  Wallet,
+  Coins,
+  Receipt,
+  ArrowLeftRight,
+  TrendingUp,
+  Tags,
+  ScrollText,
+  LifeBuoy,
+  Inbox,
+  Workflow,
+  History,
+  MessagesSquare
 } from 'lucide-react';
+import ModulesPanel from './components/ModulesPanel';
+import RestaurantPanel from './components/RestaurantPanel';
+import FinancePanel from './components/FinancePanel';
+import ModuleGuide from './components/ModuleGuide';
+import CustomersPanel from './components/CustomersPanel';
+import AgentPanel from './components/AgentPanel';
+import InboxPanel from './components/InboxPanel';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+
+// ==============================================================
+// SESIÓN DEL PANEL: token firmado por el backend (expira en 12 h)
+// ==============================================================
+const AUTH_STORAGE_KEY = 'zenith_admin_token';
+const UNAUTHORIZED_EVENT = 'zenith:unauthorized';
+
+const getStoredToken = () => {
+  try {
+    const raw = localStorage.getItem(AUTH_STORAGE_KEY);
+    if (!raw) return null;
+    const { token, expires_at } = JSON.parse(raw);
+    return token && expires_at * 1000 > Date.now() ? token : null;
+  } catch {
+    return null;
+  }
+};
+
+const storeToken = (data) => {
+  try {
+    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(data));
+  } catch {
+    // Sin almacenamiento disponible: la sesión dura lo que dure la pestaña
+  }
+};
+
+const clearStoredToken = () => {
+  try {
+    localStorage.removeItem(AUTH_STORAGE_KEY);
+  } catch {
+    // Ignorar
+  }
+};
+
+// fetch con el token del panel; ante un 401 cierra la sesión y vuelve al login
+const apiFetch = async (url, options = {}) => {
+  const token = getStoredToken();
+  const headers = { ...(options.headers || {}) };
+  if (token) headers.Authorization = `Bearer ${token}`;
+  const res = await fetch(url, { ...options, headers });
+  if (res.status === 401) {
+    clearStoredToken();
+    window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+  }
+  return res;
+};
 
 const BRAND_COLOR_PRESETS = [
   { name: 'Esmeralda Zenith', hex: '#3ecf8e' },
@@ -141,7 +216,7 @@ function FormattedChatMessage({ text, isUser }) {
   const paragraphs = clean.split(/\n+/).filter(p => p.trim());
 
   return (
-    <div className="space-y-2.5 text-sm leading-relaxed text-zinc-200">
+    <div className="space-y-2 text-sm leading-relaxed text-zinc-200">
       {paragraphs.map((p, i) => {
         const trimmed = p.trim();
         // Si es una viñeta tipo 🔹 o • o guión
@@ -152,7 +227,7 @@ function FormattedChatMessage({ text, isUser }) {
             const title = content.substring(0, colonIdx);
             const desc = content.substring(colonIdx + 1);
             return (
-              <div key={i} className="flex items-start gap-2.5 py-1.5 px-3 bg-[#11131a] rounded-lg border border-white/5 my-1 hover:border-emerald-500/20 transition-colors">
+              <div key={i} className="flex items-start gap-2 py-1.5 px-2.5 bg-[#11131a] rounded-md border border-white/5 my-1 hover:border-emerald-500/20 transition-colors">
                 <span className="text-emerald-400 text-sm mt-0.5 shrink-0 select-none">🔹</span>
                 <div>
                   <strong className="text-zinc-100 font-semibold">{title}:</strong>
@@ -162,7 +237,7 @@ function FormattedChatMessage({ text, isUser }) {
             );
           }
           return (
-            <div key={i} className="flex items-start gap-2.5 py-0.5">
+            <div key={i} className="flex items-start gap-2 py-0.5">
               <span className="text-emerald-400 text-sm mt-0.5 shrink-0 select-none">🔹</span>
               <span className="text-zinc-200">{content}</span>
             </div>
@@ -185,21 +260,21 @@ const ROUTES = {
     id: 'library',
     path: '/knowledge-base',
     label: 'Base de Conocimiento',
-    category: 'MOTOR DE CONOCIMIENTO',
+    category: 'Motor de conocimiento',
     breadcrumb: 'Base de Conocimiento'
   },
   'add-text': {
     id: 'add-text',
     path: '/create-document',
     label: 'Redactar Documento',
-    category: 'MOTOR DE CONOCIMIENTO',
+    category: 'Motor de conocimiento',
     breadcrumb: 'Redactar Documento'
   },
   scrape: {
     id: 'scrape',
     path: '/web-scraper',
     label: 'Rastreador Web & Sitemap',
-    category: 'MOTOR DE CONOCIMIENTO',
+    category: 'Motor de conocimiento',
     breadcrumb: 'Rastreador Web & Sitemap'
   },
   whatsapp: {
@@ -213,14 +288,14 @@ const ROUTES = {
     id: 'chat',
     path: '/playground',
     label: 'Simulador de Chat',
-    category: 'PRUEBAS EN VIVO',
+    category: 'Pruebas en vivo',
     breadcrumb: 'Simulador de Chat'
   },
   settings: {
     id: 'settings',
     path: '/brand-settings',
     label: 'Identidad & Motores IA',
-    category: 'CONFIGURACIÓN DEL SISTEMA',
+    category: 'Configuración del sistema',
     breadcrumb: 'Identidad & Motores IA'
   },
   handoffs: {
@@ -230,7 +305,50 @@ const ROUTES = {
     category: 'GESTIÓN DE OPERACIONES',
     breadcrumb: 'Usuarios con IA Pausada'
   }
-};
+,
+    modules: {
+      id: 'modules',
+      path: '/modules',
+      label: 'Gestor de Módulos',
+      category: 'Configuración del sistema',
+      breadcrumb: 'Gestor de Módulos'
+    },
+    restaurant: {
+      id: 'restaurant',
+      path: '/restaurant',
+      label: 'Restaurante & Pedidos',
+      category: 'GESTIÓN DE OPERACIONES',
+      breadcrumb: 'Restaurante & Pedidos'
+    },
+    agent: {
+      id: 'agent',
+      path: '/agent',
+      label: 'Agente IA',
+      category: 'AGENTE IA',
+      breadcrumb: 'Agente IA'
+    },
+    inbox: {
+      id: 'inbox',
+      path: '/inbox',
+      label: 'Bandeja',
+      category: 'ATENCIÓN AL CLIENTE',
+      breadcrumb: 'Bandeja'
+    },
+    customers: {
+      id: 'customers',
+      path: '/customers',
+      label: 'Clientes',
+      category: 'ATENCIÓN AL CLIENTE',
+      breadcrumb: 'Clientes'
+    },
+    finance: {
+      id: 'finance',
+      path: '/finance',
+      label: 'Caja & Finanzas',
+      category: 'GESTIÓN FINANCIERA',
+      breadcrumb: 'Caja & Finanzas'
+    }
+  };
 
 const getTabFromPath = (pathname) => {
   const clean = (pathname || '').toLowerCase().replace(/\/+$/, '') || '/';
@@ -240,6 +358,12 @@ const getTabFromPath = (pathname) => {
   if (clean === '/playground' || clean === '/chat' || clean === '/simulation') return 'chat';
   if (clean === '/brand-settings' || clean === '/settings' || clean === '/brand') return 'settings';
   if (clean === '/human-handoff' || clean === '/paused-users' || clean === '/handoff' || clean === '/handoffs') return 'handoffs';
+  if (clean === '/modules' || clean === '/ecosystem') return 'modules';
+  if (clean === '/restaurant' || clean === '/pedidos' || clean === '/ordenes') return 'restaurant';
+  if (clean === '/finance' || clean === '/caja' || clean === '/finanzas') return 'finance';
+  if (clean === '/customers' || clean === '/clientes' || clean === '/contacts') return 'customers';
+  if (clean === '/agent' || clean === '/agente') return 'agent';
+  if (clean === '/inbox' || clean === '/bandeja') return 'inbox';
   return 'library';
 };
 
@@ -247,39 +371,183 @@ const getPathFromTab = (tabId) => {
   return ROUTES[tabId]?.path || '/knowledge-base';
 };
 
-export default function App() {
-  const [activeTab, setActiveTab] = useState(() => getTabFromPath(window.location.pathname));
+// Sub-secciones de los módulos: cada una tiene su propia URL (/restaurant/menu, /finance/reports…)
+// para que al recargar o compartir el enlace se abra la misma pantalla.
+const SUB_ROUTES = {
+  agent: {
+    default: 'approvals',
+    slugs: { approvals: 'approvals', automations: 'automations', history: 'history', metrics: 'metrics' }
+  },
+  restaurant: {
+    default: 'kanban',
+    slugs: { kanban: 'kanban', orders: 'orders', menu: 'menu', stats: 'stats', settings: 'settings', guide: 'guide' }
+  },
+  finance: {
+    default: 'shift',
+    slugs: {
+      shift: 'shift', shifts_history: 'shift-history', transactions: 'transactions', reports: 'reports',
+      categories: 'categories', audit: 'audit', guide: 'guide'
+    }
+  }
+};
+
+const parseLocation = (pathname) => {
+  const parts = (pathname || '').toLowerCase().split('/').filter(Boolean);
+  const tab = getTabFromPath(parts.length ? `/${parts[0]}` : '/');
+  if (tab === 'customers' || tab === 'inbox') return { tab, sub: /^\d+$/.test(parts[1] || '') ? parts[1] : null };
+  const sub = SUB_ROUTES[tab];
+  if (!sub) return { tab, sub: null };
+  const match = Object.entries(sub.slugs).find(([, slug]) => slug === parts[1]);
+  return { tab, sub: match ? match[0] : sub.default };
+};
+
+const buildPath = (tab, subTab) => {
+  const base = getPathFromTab(tab);
+  if (tab === 'customers' || tab === 'inbox') return subTab ? `${base}/${subTab}` : base;
+  const sub = SUB_ROUTES[tab];
+  return sub ? `${base}/${sub.slugs[subTab] || sub.slugs[sub.default]}` : base;
+};
+
+// ==============================================================
+// MENÚ LATERAL: elementos y grupos desplegables
+// ==============================================================
+function NavBadge({ badge }) {
+  if (badge === undefined || badge === null || badge === '') return null;
+  if (typeof badge === 'object') {
+    const tones = {
+      ok: 'bg-emerald-500/15 text-emerald-400',
+      warn: 'bg-amber-500/15 text-amber-400',
+      muted: 'bg-zinc-800 text-zinc-500'
+    };
+    return <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded ${tones[badge.tone] || tones.muted}`}>{badge.text}</span>;
+  }
+  return <span className="text-[11px] tabular-nums text-zinc-500">{badge}</span>;
+}
+
+function NavItem({ icon: Icon, label, active, onClick, badge, themeColor, nested = false }) {
+  return (
+    <button
+      onClick={onClick}
+      className={`w-full flex items-center justify-between gap-2 rounded-md text-[13px] transition-colors group ${
+        nested ? 'pl-8 pr-2.5 py-1.5' : 'px-2.5 py-1.5'
+      } ${active ? 'bg-[#262626] text-zinc-50 font-medium' : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1f1f1f]'}`}
+    >
+      <span className="flex items-center gap-2 min-w-0">
+        {Icon && <Icon size={nested ? 14 : 16} className="shrink-0" style={{ color: active ? themeColor : undefined }} />}
+        <span className="truncate">{label}</span>
+      </span>
+      <NavBadge badge={badge} />
+    </button>
+  );
+}
+
+function NavGroup({ id, icon: Icon, label, open, onToggle, hasActive, indicator, themeColor, children }) {
+  return (
+    <div>
+      <button
+        onClick={() => onToggle(id)}
+        aria-expanded={open}
+        className={`w-full flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-md text-[13px] transition-colors ${
+          hasActive && !open ? 'text-zinc-100' : 'text-zinc-400 hover:text-zinc-200 hover:bg-[#1f1f1f]'
+        }`}
+      >
+        <span className="flex items-center gap-2 min-w-0">
+          <Icon size={16} className="shrink-0" style={{ color: hasActive ? themeColor : undefined }} />
+          <span className="truncate">{label}</span>
+        </span>
+        <span className="flex items-center gap-2">
+          {indicator}
+          <ChevronDown size={14} className={`text-zinc-500 transition-transform duration-200 ${open ? '' : '-rotate-90'}`} />
+        </span>
+      </button>
+      {open && <div className="mt-0.5 space-y-0.5">{children}</div>}
+    </div>
+  );
+}
+
+function Dashboard({ onLogout }) {
+  const initialLocation = parseLocation(window.location.pathname);
+  const [activeTab, setActiveTab] = useState(initialLocation.tab);
+  const [restaurantSubTab, setRestaurantSubTab] = useState(
+    initialLocation.tab === 'restaurant' ? initialLocation.sub : SUB_ROUTES.restaurant.default
+  );
+  const [financeSubTab, setFinanceSubTab] = useState(
+    initialLocation.tab === 'finance' ? initialLocation.sub : SUB_ROUTES.finance.default
+  );
+  const [customerId, setCustomerId] = useState(initialLocation.tab === 'customers' ? initialLocation.sub : null);
+  const [inboxId, setInboxId] = useState(initialLocation.tab === 'inbox' ? initialLocation.sub : null);
+  const [agentSubTab, setAgentSubTab] = useState(initialLocation.tab === 'agent' ? initialLocation.sub : SUB_ROUTES.agent.default);
+  const [pendingApprovals, setPendingApprovals] = useState(0);
+  const [openNavGroups, setOpenNavGroups] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('zenith_nav_groups') || '{}'); } catch { return {}; }
+  });
+  const toggleNavGroup = (id) => setOpenNavGroups(prev => {
+    const next = { ...prev, [id]: !(prev[id] ?? true) };
+    localStorage.setItem('zenith_nav_groups', JSON.stringify(next));
+    return next;
+  });
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
 
-  const navigateTo = (tabId, replace = false) => {
+  const navigateTo = (tabId) => {
     setActiveTab(tabId);
     setMobileMenuOpen(false);
-    const targetPath = getPathFromTab(tabId);
-    if (window.location.pathname !== targetPath) {
-      if (replace) {
-        window.history.replaceState({ tab: tabId }, '', targetPath);
-      } else {
-        window.history.pushState({ tab: tabId }, '', targetPath);
-      }
-    }
   };
 
-  // Sincronizar navegación con el historial del navegador (Atrás / Adelante)
+  // La URL refleja siempre la pantalla actual (página + sub-sección).
+  // Al cargar se normaliza sin crear historial (p. ej. /caja -> /finance/shift); después cada cambio crea una entrada.
+  const firstUrlSync = useRef(true);
+  const currentSubTab = activeTab === 'restaurant' ? restaurantSubTab
+    : activeTab === 'finance' ? financeSubTab
+    : activeTab === 'customers' ? customerId
+    : activeTab === 'agent' ? agentSubTab
+    : activeTab === 'inbox' ? inboxId : null;
+  useEffect(() => {
+    const path = buildPath(activeTab, currentSubTab);
+    if (window.location.pathname !== path) {
+      const method = firstUrlSync.current ? 'replaceState' : 'pushState';
+      window.history[method]({ tab: activeTab, sub: currentSubTab }, '', path + window.location.search);
+    }
+    firstUrlSync.current = false;
+  }, [activeTab, currentSubTab]);
+
+  // Atrás / Adelante del navegador: leer la pantalla desde la URL
   useEffect(() => {
     const handlePopState = () => {
-      setActiveTab(getTabFromPath(window.location.pathname));
+      const { tab, sub } = parseLocation(window.location.pathname);
+      setActiveTab(tab);
+      if (tab === 'restaurant') setRestaurantSubTab(sub);
+      if (tab === 'finance') setFinanceSubTab(sub);
+      if (tab === 'customers') setCustomerId(sub);
+      if (tab === 'agent') setAgentSubTab(sub);
+      if (tab === 'inbox') setInboxId(sub);
     };
-
-    if (window.location.pathname === '/') {
-      window.history.replaceState({ tab: 'library' }, '', '/knowledge-base');
-    }
-
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
   }, []);
 
   // Datos globales del sistema
+  const [installedModules, setInstalledModules] = useState([]);
+  const [moduleManifests, setModuleManifests] = useState({});
+
+  const fetchInstalledModules = async () => {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/modules`);
+      if (res.ok) {
+        const data = await res.json();
+        const installed = data.filter(m => m.installed).map(m => m.id);
+        setInstalledModules(installed);
+        setModuleManifests(Object.fromEntries(data.map(m => [m.id, m])));
+      }
+    } catch (e) {
+      console.warn('Error fetching installed modules:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchInstalledModules();
+  }, []);
+
   const [stats, setStats] = useState({
     database_type: 'PostgreSQL',
     total_db_items: 0,
@@ -384,6 +652,99 @@ export default function App() {
   ]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
+  const [chatAudioBase64, setChatAudioBase64] = useState(null);
+  const [chatAudioBlobUrl, setChatAudioBlobUrl] = useState(null);
+  const [chatAudioMimeType, setChatAudioMimeType] = useState('audio/webm');
+  const [chatImageBase64, setChatImageBase64] = useState(null);
+  const [chatImagePreview, setChatImagePreview] = useState(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const chatAudioInputRef = useRef(null);
+  const chatImageInputRef = useRef(null);
+
+  const startRecordingAudio = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioChunksRef.current = [];
+      const preferredMime = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus') ? 'audio/ogg;codecs=opus' : '');
+      const options = preferredMime ? { mimeType: preferredMime } : {};
+      const recorder = new MediaRecorder(stream, options);
+      mediaRecorderRef.current = recorder;
+      const actualMime = recorder.mimeType || preferredMime || 'audio/webm';
+      setChatAudioMimeType(actualMime);
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          audioChunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: actualMime });
+        const blobUrl = URL.createObjectURL(audioBlob);
+        setChatAudioBlobUrl(blobUrl);
+
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          const base64String = reader.result.split(',')[1];
+          setChatAudioBase64(base64String);
+        };
+        reader.readAsDataURL(audioBlob);
+
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      recorder.start();
+      setIsRecording(true);
+      showToast('🎙️ Grabando nota de voz... Habla ahora.');
+    } catch (err) {
+      showToast('No se pudo acceder al micrófono: ' + err.message, true);
+    }
+  };
+
+  const stopRecordingAudio = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
+      showToast('✅ Nota de voz lista para enviar.');
+    }
+  };
+
+  const handleAudioFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const blobUrl = URL.createObjectURL(file);
+    setChatAudioBlobUrl(blobUrl);
+    setChatAudioMimeType(file.type || 'audio/ogg');
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64String = reader.result.split(',')[1];
+      setChatAudioBase64(base64String);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+    showToast('🎙️ Archivo de audio cargado.');
+  };
+
+  const handleImageFileUpload = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const previewUrl = URL.createObjectURL(file);
+    setChatImagePreview(previewUrl);
+
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      const base64String = reader.result.split(',')[1];
+      setChatImageBase64(base64String);
+    };
+    reader.readAsDataURL(file);
+    e.target.value = '';
+    showToast('🖼️ Comprobante / Imagen adjunta.');
+  };
 
   // Toast
   const [toast, setToast] = useState({ show: false, message: '', isError: false });
@@ -413,6 +774,7 @@ export default function App() {
     qrDataUrl: null
   });
   const [isRefreshingWa, setIsRefreshingWa] = useState(false);
+  const [waChannel, setWaChannel] = useState('baileys');
   const [isLoggingOutWa, setIsLoggingOutWa] = useState(false);
   const [testWaPhone, setTestWaPhone] = useState('');
   const [testWaMessage, setTestWaMessage] = useState('¡Hola! Mensaje de prueba desde Zenith Studio Dashboard.');
@@ -422,7 +784,7 @@ export default function App() {
   const fetchWhatsAppStatus = async () => {
     setIsRefreshingWa(true);
     try {
-      const res = await fetch(`${API_BASE}/api/whatsapp/status`);
+      const res = await apiFetch(`${API_BASE}/api/whatsapp/status`);
       if (res.ok) {
         const data = await res.json();
         setWaStatus(data);
@@ -439,7 +801,7 @@ export default function App() {
 
   const fetchWhatsAppQr = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/whatsapp/qr`);
+      const res = await apiFetch(`${API_BASE}/api/whatsapp/qr`);
       if (res.ok) {
         const data = await res.json();
         setWaQrData(data);
@@ -458,7 +820,7 @@ export default function App() {
     }
     setIsLoggingOutWa(true);
     try {
-      const res = await fetch(`${API_BASE}/api/whatsapp/logout`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE}/api/whatsapp/logout`, { method: 'POST' });
       if (res.ok) {
         showToast('📱 Sesión de WhatsApp desvinculada exitosamente.');
         await Promise.all([fetchWhatsAppStatus(), fetchWhatsAppQr(), fetchStats()]);
@@ -477,7 +839,7 @@ export default function App() {
     if (!testWaPhone.trim() || !testWaMessage.trim() || isSendingTestWa) return;
     setIsSendingTestWa(true);
     try {
-      const res = await fetch(`${API_BASE}/api/whatsapp/send`, {
+      const res = await apiFetch(`${API_BASE}/api/whatsapp/send`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ to: testWaPhone.trim(), message: testWaMessage.trim() })
@@ -542,9 +904,12 @@ export default function App() {
     fetchSettings();
     fetchActiveHandoffs();
     fetchWhatsAppStatus();
+    fetchPendingApprovals();
+    let ticks = 0;
     const interval = setInterval(() => {
       fetchStats();
       fetchActiveHandoffs();
+      if (++ticks % 8 === 0) fetchPendingApprovals();
       fetchWhatsAppStatus();
       if (activeTab === 'whatsapp' || waStatus.status === 'WAITING_QR') {
         fetchWhatsAppQr();
@@ -556,8 +921,8 @@ export default function App() {
   const fetchStats = async () => {
     try {
       const [resKb, resRoot] = await Promise.all([
-        fetch(`${API_BASE}/api/knowledge/stats`).then(r => r.json()).catch(() => ({})),
-        fetch(`${API_BASE}/`).then(r => r.json()).catch(() => ({}))
+        apiFetch(`${API_BASE}/api/knowledge/stats`).then(r => r.json()).catch(() => ({})),
+        apiFetch(`${API_BASE}/`).then(r => r.json()).catch(() => ({}))
       ]);
 
       const gw = resRoot.gateway_integration || {};
@@ -574,7 +939,9 @@ export default function App() {
         company_logo: resRoot.company_logo || '',
         bot_avatar: resRoot.bot_avatar || '',
         primary_color: resRoot.primary_color || '#3ecf8e',
-        welcome_message: resRoot.welcome_message || '',
+        welcome_message: resRoot.effective_welcome?.text || resRoot.welcome_message || '',
+        welcome_source: resRoot.effective_welcome?.source || '',
+        welcome_source_name: resRoot.effective_welcome?.source_name || '',
         transfer_message: resRoot.transfer_message || '',
         support_phone: resRoot.support_phone || '',
         effective_support_phone: resRoot.effective_support_phone || '',
@@ -584,10 +951,11 @@ export default function App() {
         gateway_state: gwState
       });
 
-      if (resRoot.welcome_message) {
+      const effectiveWelcome = resRoot.effective_welcome?.text || resRoot.welcome_message;
+      if (effectiveWelcome) {
         setMessages(prev => {
           if (prev.length === 1 && prev[0].role === 'assistant' && !prev[0].isCustomized) {
-            return [{ role: 'assistant', text: resRoot.welcome_message, isCustomized: true }];
+            return [{ role: 'assistant', text: effectiveWelcome, isCustomized: true }];
           }
           return prev;
         });
@@ -599,7 +967,7 @@ export default function App() {
 
   const fetchKnowledge = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/knowledge`);
+      const res = await apiFetch(`${API_BASE}/api/knowledge`);
       const data = await res.json();
       const list = data.items || [];
       setItems(list);
@@ -612,7 +980,7 @@ export default function App() {
 
   const fetchSettings = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/settings`);
+      const res = await apiFetch(`${API_BASE}/api/settings`);
       const data = await res.json();
       setSettingsForm({
         company_name: data.company_name || '',
@@ -641,9 +1009,18 @@ export default function App() {
     }
   };
 
+  const fetchPendingApprovals = async () => {
+    try {
+      const res = await apiFetch(`${API_BASE}/api/agent/tasks?status=pending_approval&limit=1`);
+      if (res.ok) setPendingApprovals((await res.json()).counts?.pending_approval || 0);
+    } catch {
+      /* sin conexión: se reintenta en el siguiente ciclo */
+    }
+  };
+
   const fetchActiveHandoffs = async () => {
     try {
-      const res = await fetch(`${API_BASE}/api/handoff/active`);
+      const res = await apiFetch(`${API_BASE}/api/handoff/active`);
       if (res.ok) {
         const data = await res.json();
         setActiveHandoffs(data.active_handoffs || []);
@@ -656,7 +1033,7 @@ export default function App() {
   const handleReleaseHandoff = async (sessionId) => {
     setReleasingId(sessionId);
     try {
-      const res = await fetch(`${API_BASE}/api/handoff/${encodeURIComponent(sessionId)}/release`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE}/api/handoff/${encodeURIComponent(sessionId)}/release`, { method: 'POST' });
       if (!res.ok) throw new Error(await res.text());
       showToast(`▶️ IA reanudada exitosamente para ${sessionId}.`);
       await Promise.all([fetchActiveHandoffs(), fetchStats()]);
@@ -671,7 +1048,7 @@ export default function App() {
     if (activeHandoffs.length === 0) return;
     setIsReleasingAll(true);
     try {
-      const res = await fetch(`${API_BASE}/api/handoff/release-all`, { method: 'POST' });
+      const res = await apiFetch(`${API_BASE}/api/handoff/release-all`, { method: 'POST' });
       if (!res.ok) throw new Error(await res.text());
       const data = await res.json();
       showToast(`▶️ Se despausó la IA para ${data.count || activeHandoffs.length} usuario(s). IA reactivada.`);
@@ -689,7 +1066,7 @@ export default function App() {
     if (!phone) return;
     setIsPausingManual(true);
     try {
-      const res = await fetch(`${API_BASE}/api/handoff/pause`, {
+      const res = await apiFetch(`${API_BASE}/api/handoff/pause`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -718,7 +1095,7 @@ export default function App() {
     if (!sessionId) return;
     setIsSavingEdit(true);
     try {
-      const res = await fetch(`${API_BASE}/api/handoff/${encodeURIComponent(sessionId)}/update`, {
+      const res = await apiFetch(`${API_BASE}/api/handoff/${encodeURIComponent(sessionId)}/update`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -750,7 +1127,7 @@ export default function App() {
   const handleSyncCache = async () => {
     setIsSyncing(true);
     try {
-      await fetch(`${API_BASE}/api/knowledge/sync`, { method: 'POST' });
+      await apiFetch(`${API_BASE}/api/knowledge/sync`, { method: 'POST' });
       showToast('⚡ In-Memory Hot Cache sincronizado con éxito');
       fetchStats();
     } catch (err) {
@@ -766,7 +1143,7 @@ export default function App() {
 
     setIsSavingText(true);
     try {
-      const res = await fetch(`${API_BASE}/api/knowledge/text`, {
+      const res = await apiFetch(`${API_BASE}/api/knowledge/text`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -796,7 +1173,7 @@ export default function App() {
 
     setIsScraping(true);
     try {
-      const res = await fetch(`${API_BASE}/api/knowledge/url`, {
+      const res = await apiFetch(`${API_BASE}/api/knowledge/url`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -827,7 +1204,7 @@ export default function App() {
     setIsCrawling(true);
     setDiscoveredUrls([]);
     try {
-      const res = await fetch(`${API_BASE}/api/knowledge/crawl`, {
+      const res = await apiFetch(`${API_BASE}/api/knowledge/crawl`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -866,7 +1243,7 @@ export default function App() {
 
     setIsBatchIndexing(true);
     try {
-      const res = await fetch(`${API_BASE}/api/knowledge/batch-urls`, {
+      const res = await apiFetch(`${API_BASE}/api/knowledge/batch-urls`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -891,7 +1268,7 @@ export default function App() {
   const handleDeleteItem = async (id) => {
     if (!confirm('¿Seguro que deseas eliminar este conocimiento de la base de datos?')) return;
     try {
-      const res = await fetch(`${API_BASE}/api/knowledge/${id}`, { method: 'DELETE' });
+      const res = await apiFetch(`${API_BASE}/api/knowledge/${id}`, { method: 'DELETE' });
       if (!res.ok) throw new Error('Fallo al borrar');
       showToast('Documento eliminado');
       fetchKnowledge();
@@ -905,7 +1282,7 @@ export default function App() {
     e.preventDefault();
     setIsSavingSettings(true);
     try {
-      const res = await fetch(`${API_BASE}/api/settings`, {
+      const res = await apiFetch(`${API_BASE}/api/settings`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(settingsForm)
@@ -936,20 +1313,38 @@ export default function App() {
   };
 
   const handleSendMessage = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     const text = chatInput.trim();
-    if (!text || isChatLoading) return;
+    if ((!text && !chatAudioBase64 && !chatImageBase64) || isChatLoading) return;
 
-    const userMsg = { role: 'user', text };
+    const userMsg = {
+      role: 'user',
+      text,
+      audioUrl: chatAudioBlobUrl,
+      imageUrl: chatImagePreview
+    };
     setMessages(prev => [...prev, userMsg]);
     setChatInput('');
+    const audioToSend = chatAudioBase64;
+    const imageToSend = chatImageBase64;
+    setChatAudioBase64(null);
+    setChatAudioBlobUrl(null);
+    setChatImageBase64(null);
+    setChatImagePreview(null);
     setIsChatLoading(true);
 
     try {
-      const res = await fetch(`${API_BASE}/chat`, {
+      const res = await apiFetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ session_id: 'react-playground-session', message: text })
+        body: JSON.stringify({
+          session_id: 'react-playground-session',
+          message: text,
+          audio_base64: audioToSend,
+          audio_mime_type: chatAudioMimeType || 'audio/webm',
+          image_base64: imageToSend,
+          image_mime_type: 'image/jpeg'
+        })
       });
       const data = await res.json();
       if (data.reply && data.reply.trim().length > 0) {
@@ -987,7 +1382,7 @@ export default function App() {
   }, [themeColor, themeRgb]);
 
   return (
-    <div className="flex min-h-screen bg-[#0c0d12] text-zinc-100 font-sans">
+    <div className="flex min-h-screen bg-[#121212] text-zinc-100 font-sans">
       <style>{`
         :root {
           --theme-primary: ${themeColor} !important;
@@ -1007,17 +1402,17 @@ export default function App() {
         .text-\\[\\#3ecf8e\\],
         .text-emerald-400,
         .text-emerald-500,
-        [class*="text-[#3ecf8e]"] {
+        [class^="text-[#3ecf8e]"], [class*=" text-[#3ecf8e]"] {
           color: ${themeColor} !important;
         }
         .bg-\\[\\#3ecf8e\\],
         .bg-emerald-500,
-        [class*="bg-[#3ecf8e]"]:not([class*="/"]) {
+        [class^="bg-[#3ecf8e]"]:not([class*="/"]), [class*=" bg-[#3ecf8e]"]:not([class*="/"]) {
           background-color: ${themeColor} !important;
         }
         .border-\\[\\#3ecf8e\\],
         .border-emerald-500,
-        [class*="border-[#3ecf8e]"]:not([class*="/"]) {
+        [class^="border-[#3ecf8e]"]:not([class*="/"]), [class*=" border-[#3ecf8e]"]:not([class*="/"]) {
           border-color: ${themeColor} !important;
         }
         .bg-\\[\\#3ecf8e\\]\\/5,
@@ -1027,8 +1422,8 @@ export default function App() {
         .bg-emerald-950,
         .bg-emerald-950\\/60,
         .bg-emerald-950\\/70,
-        [class*="bg-[#3ecf8e]/"],
-        [class*="bg-emerald-950"] {
+        [class^="bg-[#3ecf8e]/"], [class*=" bg-[#3ecf8e]/"],
+        [class^="bg-emerald-950"], [class*=" bg-emerald-950"] {
           background-color: rgba(${themeRgb}, 0.15) !important;
         }
         .border-\\[\\#3ecf8e\\]\\/20,
@@ -1037,8 +1432,8 @@ export default function App() {
         .border-emerald-800,
         .border-emerald-800\\/50,
         .border-emerald-800\\/60,
-        [class*="border-[#3ecf8e]/"],
-        [class*="border-emerald-800"] {
+        [class^="border-[#3ecf8e]/"], [class*=" border-[#3ecf8e]/"],
+        [class^="border-emerald-800"], [class*=" border-emerald-800"] {
           border-color: rgba(${themeRgb}, 0.35) !important;
         }
         .hover\\:bg-\\[\\#3ecf8e\\]:hover,
@@ -1073,8 +1468,8 @@ export default function App() {
         input[type="radio"] {
           accent-color: ${themeColor} !important;
         }
-        .shadow-emerald-950,
-        .shadow-emerald-950\\/20 {
+        .,
+        .\\/20 {
           box-shadow: 0 10px 15px -3px rgba(${themeRgb}, 0.25) !important;
         }
         *::-webkit-scrollbar-thumb:hover {
@@ -1085,26 +1480,26 @@ export default function App() {
       {/* ==============================================================
           SIDEBAR (ESTILO SUPABASE STUDIO)
           ============================================================== */}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-64 bg-[#111218] border-r border-[#1f2330] flex flex-col transition-transform duration-200 md:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-50 w-60 bg-[#171717] border-r border-[#2e2e2e] flex flex-col transition-transform duration-200 md:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Brand Header */}
-        <div className="h-16 px-5 border-b border-[#1f2330] flex items-center justify-between">
-          <div className="flex items-center gap-3 overflow-hidden">
+        <div className="h-14 px-3 border-b border-[#2e2e2e] flex items-center justify-between">
+          <div className="flex items-center gap-2 overflow-hidden">
             {stats.company_logo ? (
               <img
                 src={stats.company_logo}
                 alt={stats.company || 'Logo'}
-                className="w-9 h-9 rounded-lg object-contain bg-zinc-900 border border-[#1f2330] p-0.5 shrink-0 shadow-md"
+                className="w-8 h-8 rounded-md object-contain bg-zinc-900 border border-[#2e2e2e] p-0.5 shrink-0"
               />
             ) : (
               <div
-                className="w-9 h-9 rounded-lg flex items-center justify-center font-extrabold text-white text-lg shadow-lg shrink-0 transition-colors"
+                className="w-8 h-8 rounded-md flex items-center justify-center font-semibold text-white text-sm shrink-0 transition-colors"
                 style={{ backgroundColor: themeColor }}
               >
                 {companyInitial}
               </div>
             )}
             <div className="flex flex-col min-w-0">
-              <span className="font-bold text-sm text-zinc-100 truncate">{stats.company || 'Zenith Platform'}</span>
+              <span className="font-medium text-sm text-zinc-100 truncate">{stats.company || 'Zenith Platform'}</span>
               <div className="flex items-center gap-1.5 text-xs text-zinc-400">
                 <span
                   className="w-2 h-2 rounded-full animate-pulse"
@@ -1120,268 +1515,181 @@ export default function App() {
         </div>
 
         {/* Navigation Items */}
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          <div className="px-3 pt-2 pb-1.5 text-[10px] font-extrabold tracking-wider text-zinc-500 uppercase">
-            MOTOR DE CONOCIMIENTO
-          </div>
+        <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+          {(() => {
+            const waOnline = waStatus.connected || waStatus.status === 'CONNECTED';
+            const waBadge = waOnline
+              ? { text: 'Online', tone: 'ok' }
+              : waStatus.status === 'WAITING_QR' ? { text: 'QR', tone: 'warn' } : { text: 'Offline', tone: 'muted' };
+            const isRestaurant = (sub) => activeTab === 'restaurant' && restaurantSubTab === sub;
+            const goRestaurant = (sub) => { setRestaurantSubTab(sub); navigateTo('restaurant'); };
+            const isFinance = (sub) => activeTab === 'finance' && financeSubTab === sub;
+            const goFinance = (sub) => { setFinanceSubTab(sub); navigateTo('finance'); };
+            const groups = [
+              {
+                id: 'knowledge', label: 'Conocimiento', icon: BookOpen,
+                items: [
+                  { tab: 'library', label: 'Base de conocimiento', icon: BookOpen, badge: stats.total_db_items },
+                  { tab: 'add-text', label: 'Redactar documento', icon: PlusCircle },
+                  { tab: 'scrape', label: 'Rastreador web', icon: Globe }
+                ]
+              },
+              {
+                id: 'agent', label: 'Agente IA', icon: Bot,
+                indicator: pendingApprovals > 0
+                  ? <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={`${pendingApprovals} por aprobar`} />
+                  : null,
+                items: [
+                  { label: 'Aprobaciones', icon: Inbox, active: activeTab === 'agent' && agentSubTab === 'approvals', onClick: () => { setAgentSubTab('approvals'); navigateTo('agent'); }, badge: pendingApprovals ? { text: pendingApprovals, tone: 'warn' } : undefined },
+                  { label: 'Automatizaciones', icon: Workflow, active: activeTab === 'agent' && agentSubTab === 'automations', onClick: () => { setAgentSubTab('automations'); navigateTo('agent'); } },
+                  { label: 'Historial', icon: History, active: activeTab === 'agent' && agentSubTab === 'history', onClick: () => { setAgentSubTab('history'); navigateTo('agent'); } },
+                  { label: 'Métricas', icon: BarChart3, active: activeTab === 'agent' && agentSubTab === 'metrics', onClick: () => { setAgentSubTab('metrics'); navigateTo('agent'); } }
+                ]
+              },
+              {
+                id: 'service', label: 'Atención al cliente', icon: MessageCircle,
+                indicator: activeHandoffs.length > 0
+                  ? <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={`${activeHandoffs.length} con IA pausada`} />
+                  : null,
+                items: [
+                  { label: 'Bandeja', icon: MessagesSquare, active: activeTab === 'inbox', onClick: () => navigateTo('inbox'), badge: activeHandoffs.length > 0 ? { text: activeHandoffs.length, tone: 'warn' } : undefined },
+                  { label: 'Clientes', icon: Users, active: activeTab === 'customers', onClick: () => { setCustomerId(null); navigateTo('customers'); } },
+                  { tab: 'whatsapp', label: 'WhatsApp', icon: MessageCircle, badge: waBadge },
+                  { tab: 'handoffs', label: 'IA pausada', icon: UserCheck, badge: activeHandoffs.length > 0 ? { text: activeHandoffs.length, tone: 'warn' } : 0 }
+                ]
+              },
+              installedModules.includes('restaurant') && {
+                id: 'restaurant', label: 'Restaurante', icon: UtensilsCrossed,
+                items: [
+                  { label: 'Tablero Kanban', icon: Kanban, active: isRestaurant('kanban'), onClick: () => goRestaurant('kanban') },
+                  { label: 'Historial de Pedidos', icon: ClipboardList, active: isRestaurant('orders'), onClick: () => goRestaurant('orders') },
+                  { label: 'Menú', icon: UtensilsCrossed, active: isRestaurant('menu'), onClick: () => goRestaurant('menu') },
+                  { label: 'Estadísticas', icon: BarChart3, active: isRestaurant('stats'), onClick: () => goRestaurant('stats') },
+                  { label: 'Configuración', icon: Settings, active: isRestaurant('settings'), onClick: () => goRestaurant('settings') },
+                  { label: 'Guía de uso', icon: LifeBuoy, active: isRestaurant('guide'), onClick: () => goRestaurant('guide') }
+                ]
+              },
+              installedModules.includes('finance') && {
+                id: 'finance', label: 'Caja & Finanzas', icon: Wallet,
+                items: [
+                  { label: 'Turno & Arqueo', icon: Coins, active: isFinance('shift'), onClick: () => goFinance('shift') },
+                  { label: 'Historial Cortes', icon: Receipt, active: isFinance('shifts_history'), onClick: () => goFinance('shifts_history') },
+                  { label: 'Movimientos', icon: ArrowLeftRight, active: isFinance('transactions'), onClick: () => goFinance('transactions') },
+                  { label: 'Reportes', icon: TrendingUp, active: isFinance('reports'), onClick: () => goFinance('reports') },
+                  { label: 'Categorías', icon: Tags, active: isFinance('categories'), onClick: () => goFinance('categories') },
+                  { label: 'Bitácora', icon: ScrollText, active: isFinance('audit'), onClick: () => goFinance('audit') },
+                  { label: 'Guía de uso', icon: LifeBuoy, active: isFinance('guide'), onClick: () => goFinance('guide') }
+                ]
+              },
+              {
+                id: 'system', label: 'Configuración', icon: Settings,
+                items: [
+                  { tab: 'settings', label: 'Identidad e IA', icon: Sparkles },
+                  { tab: 'modules', label: 'Módulos', icon: Boxes }
+                ]
+              }
+            ].filter(Boolean);
 
-          <button
-            onClick={() => navigateTo('library')}
-            style={activeTab === 'library' ? {
-              backgroundColor: `rgba(${themeRgb}, 0.12)`,
-              color: themeColor
-            } : {}}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all group ${
-              activeTab === 'library'
-                ? 'font-semibold shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <BookOpen size={18} style={{ color: activeTab === 'library' ? themeColor : undefined }} className={activeTab === 'library' ? '' : 'text-zinc-400 group-hover:text-zinc-300'} />
-              <span className="truncate">Base de Conocimiento</span>
-            </div>
-            <span
-              style={activeTab === 'library' ? {
-                backgroundColor: `rgba(${themeRgb}, 0.2)`,
-                color: themeColor
-              } : {}}
-              className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                activeTab === 'library' ? '' : 'bg-zinc-850 text-zinc-400'
-              }`}
-            >
-              {stats.total_db_items}
-            </span>
-          </button>
-
-          <button
-            onClick={() => navigateTo('add-text')}
-            style={activeTab === 'add-text' ? {
-              backgroundColor: `rgba(${themeRgb}, 0.12)`,
-              color: themeColor
-            } : {}}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all group ${
-              activeTab === 'add-text'
-                ? 'font-semibold shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <PlusCircle size={18} style={{ color: activeTab === 'add-text' ? themeColor : undefined }} className={activeTab === 'add-text' ? '' : 'text-zinc-400 group-hover:text-zinc-300'} />
-            <span className="truncate">Redactar Documento</span>
-          </button>
-
-          <button
-            onClick={() => navigateTo('scrape')}
-            style={activeTab === 'scrape' ? {
-              backgroundColor: `rgba(${themeRgb}, 0.12)`,
-              color: themeColor
-            } : {}}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all group ${
-              activeTab === 'scrape'
-                ? 'font-semibold shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <Globe size={18} style={{ color: activeTab === 'scrape' ? themeColor : undefined }} className={activeTab === 'scrape' ? '' : 'text-zinc-400 group-hover:text-zinc-300'} />
-            <span className="truncate">Rastreador Web & Sitemap</span>
-          </button>
-
-          <div className="pt-4 px-3 pb-1.5 text-[10px] font-extrabold tracking-wider text-zinc-500 uppercase flex items-center justify-between">
-            <span>CANAL WHATSAPP</span>
-            <span
-              className={`w-2 h-2 rounded-full ${
-                waStatus.connected || waStatus.status === 'CONNECTED'
-                  ? 'bg-emerald-400 animate-pulse'
-                  : waStatus.status === 'WAITING_QR'
-                    ? 'bg-amber-400'
-                    : 'bg-zinc-600'
-              }`}
-            ></span>
-          </div>
-
-          <button
-            onClick={() => navigateTo('whatsapp')}
-            style={activeTab === 'whatsapp' ? {
-              backgroundColor: `rgba(${themeRgb}, 0.12)`,
-              color: themeColor
-            } : {}}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all group ${
-              activeTab === 'whatsapp'
-                ? 'font-semibold shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <MessageCircle size={18} style={{ color: activeTab === 'whatsapp' ? themeColor : undefined }} className={activeTab === 'whatsapp' ? '' : 'text-zinc-400 group-hover:text-zinc-300'} />
-              <span className="truncate">WhatsApp Gateway</span>
-            </div>
-            <span
-              className={`text-[10px] font-mono px-2 py-0.5 rounded-full ${
-                waStatus.connected || waStatus.status === 'CONNECTED'
-                  ? 'bg-emerald-500/20 text-emerald-400 font-bold'
-                  : waStatus.status === 'WAITING_QR'
-                    ? 'bg-amber-500/20 text-amber-400 font-bold'
-                    : 'bg-zinc-850 text-zinc-500'
-              }`}
-            >
-              {waStatus.connected || waStatus.status === 'CONNECTED' ? 'ONLINE' : (waStatus.status === 'WAITING_QR' ? 'QR' : 'OFFLINE')}
-            </span>
-          </button>
-
-          <div className="pt-4 px-3 pb-1.5 text-[10px] font-extrabold tracking-wider text-zinc-500 uppercase">
-            PRUEBAS EN VIVO
-          </div>
-
-          <button
-            onClick={() => navigateTo('chat')}
-            style={activeTab === 'chat' ? {
-              backgroundColor: `rgba(${themeRgb}, 0.12)`,
-              color: themeColor
-            } : {}}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all group ${
-              activeTab === 'chat'
-                ? 'font-semibold shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <MessageSquare size={18} style={{ color: activeTab === 'chat' ? themeColor : undefined }} className={activeTab === 'chat' ? '' : 'text-zinc-400 group-hover:text-zinc-300'} />
-              <span className="truncate">Simulador de Chat</span>
-            </div>
-            <span className="w-2 h-2 rounded-full animate-pulse" style={{ backgroundColor: themeColor }} title="Playground activo"></span>
-          </button>
-
-          <div className="pt-4 px-3 pb-1.5 text-[10px] font-extrabold tracking-wider text-zinc-500 uppercase flex items-center justify-between">
-            <span>GESTIÓN DE OPERACIONES</span>
-            {activeHandoffs.length > 0 && (
-              <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" title={`${activeHandoffs.length} usuarios con IA pausada`}></span>
-            )}
-          </div>
-
-          <button
-            onClick={() => navigateTo('handoffs')}
-            style={activeTab === 'handoffs' ? {
-              backgroundColor: `rgba(${themeRgb}, 0.12)`,
-              color: themeColor
-            } : {}}
-            className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all group ${
-              activeTab === 'handoffs'
-                ? 'font-semibold shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <div className="flex items-center gap-3 min-w-0">
-              <UserCheck size={18} style={{ color: activeTab === 'handoffs' ? themeColor : undefined }} className={activeTab === 'handoffs' ? '' : 'text-zinc-400 group-hover:text-zinc-300'} />
-              <span className="truncate">Usuarios con IA Pausada</span>
-            </div>
-            {activeHandoffs.length > 0 ? (
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30">
-                {activeHandoffs.length}
-              </span>
-            ) : (
-              <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-zinc-850 text-zinc-500">
-                0
-              </span>
-            )}
-          </button>
-
-          <div className="pt-4 px-3 pb-1.5 text-[10px] font-extrabold tracking-wider text-zinc-500 uppercase">
-            CONFIGURACIÓN DEL SISTEMA
-          </div>
-
-          <button
-            onClick={() => navigateTo('settings')}
-            style={activeTab === 'settings' ? {
-              backgroundColor: `rgba(${themeRgb}, 0.12)`,
-              color: themeColor
-            } : {}}
-            className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all group ${
-              activeTab === 'settings'
-                ? 'font-semibold shadow-sm'
-                : 'text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800/40'
-            }`}
-          >
-            <Settings size={18} style={{ color: activeTab === 'settings' ? themeColor : undefined }} className={activeTab === 'settings' ? '' : 'text-zinc-400 group-hover:text-zinc-300'} />
-            <span className="truncate">Identidad & Motores IA</span>
-          </button>
+            return (
+              <>
+                <NavItem
+                  icon={MessageSquare}
+                  label="Simulador de chat"
+                  active={activeTab === 'chat'}
+                  onClick={() => navigateTo('chat')}
+                  themeColor={themeColor}
+                />
+                <div className="h-2" />
+                {groups.map(group => {
+                  const items = group.items.map(item => ({
+                    ...item,
+                    active: item.active ?? activeTab === item.tab,
+                    onClick: item.onClick ?? (() => navigateTo(item.tab))
+                  }));
+                  const hasActive = items.some(i => i.active);
+                  return (
+                    <NavGroup
+                      key={group.id}
+                      id={group.id}
+                      icon={group.icon}
+                      label={group.label}
+                      open={openNavGroups[group.id] ?? true}
+                      onToggle={toggleNavGroup}
+                      hasActive={hasActive}
+                      indicator={group.indicator}
+                      themeColor={themeColor}
+                    >
+                      {items.map(item => (
+                        <NavItem key={item.label} {...item} nested themeColor={themeColor} />
+                      ))}
+                    </NavGroup>
+                  );
+                })}
+              </>
+            );
+          })()}
         </nav>
 
         {/* Footer Sidebar */}
-        <div className="p-4 border-t border-[#1f2330] bg-black/20 space-y-3">
-          <div className="flex items-center justify-between px-3 py-2 bg-[#0c0d12] border border-[#1f2330] rounded-lg text-xs">
-            <span className="text-zinc-400">WhatsApp Gateway</span>
-            <span
-              style={{
-                color: (stats.wa_connected || stats.gateway_state === 'CONNECTED') ? themeColor : undefined
-              }}
-              className={`font-semibold ${
-                stats.wa_connected || stats.gateway_state === 'CONNECTED'
-                  ? ''
-                  : stats.gateway_state === 'WAITING_QR'
-                    ? 'text-amber-400'
-                    : stats.gateway_state === 'CONNECTING' || stats.gateway_state === 'RECONNECTING'
-                      ? 'text-sky-400 animate-pulse'
-                      : 'text-rose-400'
-              }`}
-            >
-              {stats.gateway_state || (stats.wa_connected ? 'CONNECTED' : 'DISCONNECTED')}
-            </span>
-          </div>
-
-          <div className="flex gap-2">
-            <a
-              href="http://localhost:3000/qr"
-              target="_blank"
-              rel="noreferrer"
-              className="flex-1 py-1.5 px-2 bg-zinc-800/60 hover:bg-zinc-800 border border-[#1f2330] rounded-md text-[11px] font-medium text-center text-zinc-300 hover:text-white transition-colors"
-            >
-              📲 Ver QR
-            </a>
-            <a
-              href={`${API_BASE}/docs`}
-              target="_blank"
-              rel="noreferrer"
-              className="flex-1 py-1.5 px-2 bg-zinc-800/60 hover:bg-zinc-800 border border-[#1f2330] rounded-md text-[11px] font-medium text-center text-zinc-300 hover:text-white transition-colors"
-            >
-              📖 Swagger
-            </a>
-          </div>
+        <div className="p-2 border-t border-[#2e2e2e] flex items-center gap-1">
+          <a
+            href="http://localhost:3000/qr"
+            target="_blank"
+            rel="noreferrer"
+            title="Abrir página del QR de WhatsApp"
+            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[12px] text-zinc-400 hover:text-zinc-200 hover:bg-[#1f1f1f] transition-colors"
+          >
+            <QrCode size={14} /> QR
+          </a>
+          <a
+            href={`${API_BASE}/docs`}
+            target="_blank"
+            rel="noreferrer"
+            title="Documentación de la API"
+            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[12px] text-zinc-400 hover:text-zinc-200 hover:bg-[#1f1f1f] transition-colors"
+          >
+            <FileCode2 size={14} /> API
+          </a>
+          <button
+            onClick={onLogout}
+            title="Cerrar sesión del panel"
+            className="flex-1 flex items-center justify-center gap-1.5 py-1.5 rounded-md text-[12px] text-zinc-400 hover:text-rose-300 hover:bg-rose-500/10 transition-colors"
+          >
+            <LogOut size={14} /> Salir
+          </button>
         </div>
       </aside>
 
       {/* ==============================================================
           MAIN CONTENT WORKSPACE
           ============================================================== */}
-      <div className="flex-1 md:ml-64 flex flex-col min-h-screen min-w-0">
+      <div className="flex-1 md:ml-60 flex flex-col min-h-screen min-w-0">
 
         {/* Top Header */}
-        <header className="h-16 px-6 bg-[#111218]/80 backdrop-blur-md border-b border-[#1f2330] sticky top-0 z-30 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <button className="md:hidden p-2 text-zinc-400 hover:text-white rounded-lg border border-[#1f2330]" onClick={() => setMobileMenuOpen(true)}>
+        <header className="h-14 px-4 md:px-6 bg-[#121212]/90 backdrop-blur-md border-b border-[#2e2e2e] sticky top-0 z-30 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <button className="md:hidden p-2 text-zinc-400 hover:text-white rounded-md border border-[#2e2e2e]" onClick={() => setMobileMenuOpen(true)}>
               <Menu size={18} />
             </button>
             <div className="flex items-center gap-2 text-sm">
               <span className="text-zinc-500 font-medium">{stats.company || 'Zenith Platform'}</span>
               <span className="text-zinc-600">/</span>
-              <span className="text-zinc-200 font-bold">
+              <span className="text-zinc-200 font-medium">
                 {ROUTES[activeTab]?.breadcrumb || 'Knowledge Base'}
-              </span>
-              <span className="hidden sm:inline-block text-[11px] font-mono px-2 py-0.5 rounded bg-zinc-900 text-zinc-400 border border-zinc-800 ml-1">
-                {ROUTES[activeTab]?.path || '/knowledge-base'}
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2">
             <div className="hidden sm:flex items-center gap-2">
               <button
                 onClick={() => navigateTo('whatsapp')}
-                className={`flex items-center gap-1.5 px-3 py-1 bg-[#151720] border rounded-full text-xs font-medium transition-all ${
+                className={`flex items-center gap-1.5 px-3 py-1 bg-[#1c1c1c] border rounded-full text-xs font-medium transition-all ${
                   waStatus.connected || waStatus.status === 'CONNECTED'
                     ? 'border-emerald-500/40 text-emerald-400 hover:bg-emerald-500/10'
                     : waStatus.status === 'WAITING_QR'
                       ? 'border-amber-500/40 text-amber-400 hover:bg-amber-500/10'
-                      : 'border-[#1f2330] text-zinc-400 hover:text-zinc-200'
+                      : 'border-[#2e2e2e] text-zinc-400 hover:text-zinc-200'
                 }`}
               >
                 <span className={`w-1.5 h-1.5 rounded-full ${
@@ -1397,21 +1705,12 @@ export default function App() {
                     : (waStatus.status === 'WAITING_QR' ? 'Vincular WhatsApp' : 'WhatsApp Offline')}
                 </span>
               </button>
-              <div className="px-3 py-1 bg-[#151720] border border-[#1f2330] rounded-full text-xs font-medium text-zinc-400">
-                BD: <strong className="text-zinc-200">{stats.database_type}</strong>
-              </div>
-              <div className="px-3 py-1 bg-[#151720] border border-[#1f2330] rounded-full text-xs font-medium text-zinc-400">
-                Latencia: <strong className="text-[#3ecf8e]" style={{ color: themeColor }}>&lt; 1 ms</strong>
-              </div>
-              <div className="px-3 py-1 bg-[#151720] border border-[#1f2330] rounded-full text-xs font-medium text-zinc-400">
-                Motor: <strong className="text-zinc-200">{stats.active_model}</strong>
-              </div>
             </div>
 
             <button
               onClick={handleSyncCache}
               disabled={isSyncing}
-              className="flex items-center gap-2 px-3 py-1.5 bg-[#151720] hover:bg-[#3ecf8e]/10 border border-[#1f2330] hover:border-[#3ecf8e] text-zinc-200 hover:text-[#3ecf8e] rounded-lg text-xs font-semibold transition-all"
+              className="flex items-center gap-2 px-3 py-1.5 bg-[#1c1c1c] hover:bg-[#3ecf8e]/10 border border-[#2e2e2e] hover:border-[#3ecf8e] text-zinc-200 hover:text-[#3ecf8e] rounded-md text-[13px] font-medium transition-all"
             >
               <RefreshCw size={14} className={isSyncing ? 'animate-spin text-[#3ecf8e]' : ''} style={{ color: isSyncing ? themeColor : undefined }} />
               <span>Sincronizar</span>
@@ -1420,44 +1719,50 @@ export default function App() {
         </header>
 
         {/* Content Container */}
-        <main className="flex-1 p-6 lg:p-8 max-w-7xl w-full mx-auto">
+        <main className="flex-1 w-full max-w-[1200px] mx-auto px-4 md:px-8 py-6 md:py-8">
 
           {/* ==============================================================
               TAB 1: BASE DE CONOCIMIENTO (LIBRARY)
               ============================================================== */}
           {activeTab === 'library' && (
             <div className="space-y-6 animate-fadeIn">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+                <div>
+                  <h1 className="text-xl font-medium tracking-tight text-zinc-100">Base de conocimiento</h1>
+                  <p className="text-sm text-zinc-400 mt-1 max-w-2xl">La única fuente de información que usa la IA para responder a tus clientes.</p>
+                </div>
+              </div>
               {/* Metric Row */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="p-4 bg-[#151720] border border-[#1f2330] rounded-xl flex flex-col justify-between">
-                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Documentos Indexados</span>
-                  <div className="mt-2 text-2xl font-extrabold text-zinc-100">{stats.total_db_items}</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md flex flex-col justify-between">
+                  <span className="text-xs font-medium text-zinc-500">Documentos Indexados</span>
+                  <div className="mt-2 text-2xl font-semibold text-zinc-100">{stats.total_db_items}</div>
                   <span className="text-xs text-zinc-400 mt-1">Guardados en {stats.database_type}</span>
                 </div>
 
-                <div className="p-4 bg-[#151720] border border-[#1f2330] rounded-xl flex flex-col justify-between">
-                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">In-Memory Hot Cache</span>
-                  <div className="mt-2 text-2xl font-extrabold text-[#3ecf8e]" style={{ color: themeColor }}>0.00 ms</div>
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md flex flex-col justify-between">
+                  <span className="text-xs font-medium text-zinc-500">In-Memory Hot Cache</span>
+                  <div className="mt-2 text-2xl font-semibold text-[#3ecf8e]" style={{ color: themeColor }}>0.00 ms</div>
                   <span className="text-xs text-zinc-400 mt-1">Recuperación instantánea</span>
                 </div>
 
-                <div className="p-4 bg-[#151720] border border-[#1f2330] rounded-xl flex flex-col justify-between">
-                  <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider">Motor Activo</span>
-                  <div className="mt-2 text-2xl font-extrabold text-zinc-100 uppercase">{stats.active_provider}</div>
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md flex flex-col justify-between">
+                  <span className="text-xs font-medium text-zinc-500">Motor Activo</span>
+                  <div className="mt-2 text-2xl font-semibold text-zinc-100 uppercase">{stats.active_provider}</div>
                   <span className="text-xs text-zinc-400 mt-1">{stats.active_model}</span>
                 </div>
 
                 <div
                   onClick={() => navigateTo('whatsapp')}
-                  className="p-4 bg-[#151720] border border-[#1f2330] hover:border-zinc-700/80 rounded-xl flex flex-col justify-between cursor-pointer transition-all hover:-translate-y-0.5 group"
+                  className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] hover:border-zinc-700/80 rounded-md flex flex-col justify-between cursor-pointer transition-all hover:-translate-y-0.5 group"
                 >
                   <div className="flex items-center justify-between">
-                    <span className="text-xs font-bold text-zinc-500 uppercase tracking-wider group-hover:text-zinc-300">WhatsApp Gateway</span>
+                    <span className="text-xs font-medium text-zinc-500 group-hover:text-zinc-300">WhatsApp Gateway</span>
                     <ExternalLink size={13} className="text-zinc-500 group-hover:text-zinc-300" />
                   </div>
                   <div
                     style={(waStatus.connected || waStatus.status === 'CONNECTED' || stats.wa_connected) ? { color: themeColor } : {}}
-                    className={`mt-2 text-2xl font-extrabold ${
+                    className={`mt-2 text-2xl font-semibold ${
                       waStatus.connected || waStatus.status === 'CONNECTED' || stats.wa_connected
                         ? 'text-[#3ecf8e]'
                         : waStatus.status === 'WAITING_QR'
@@ -1476,16 +1781,16 @@ export default function App() {
               </div>
 
               {/* Header de Sección y Filtros */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pt-2">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-3">
                 <div>
-                  <h1 className="text-xl font-bold text-zinc-100">Documentos y Sitios Web en Producción</h1>
-                  <p className="text-sm text-zinc-400 mt-0.5">La IA responderá basándose estrictamente en estos datos con cero alucinaciones.</p>
+                  <h2 className="text-base font-medium text-zinc-100">Documentos y sitios web</h2>
+                  <p className="text-[13px] text-zinc-400 mt-0.5">La IA responde basándose estrictamente en estos datos.</p>
                 </div>
 
                 <div className="flex gap-2">
                   <button
                     onClick={() => setActiveTab('scrape')}
-                    className="inline-flex items-center gap-2 px-3.5 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-semibold text-xs rounded-lg border border-[#1f2330] transition-all"
+                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 font-medium text-[13px] rounded-md border border-[#2e2e2e] transition-all"
                   >
                     <Globe size={15} />
                     <span>Escanear Sitio Web</span>
@@ -1494,7 +1799,7 @@ export default function App() {
                   <button
                     onClick={() => setActiveTab('add-text')}
                     style={{ backgroundColor: themeColor }}
-                    className="inline-flex items-center gap-2 px-4 py-2 text-zinc-950 font-bold text-sm rounded-lg shadow-lg transition-all shrink-0 hover:brightness-110"
+                    className="inline-flex items-center gap-2 px-3 py-1.5 text-zinc-950 font-medium text-[13px] rounded-md transition-all shrink-0 hover:brightness-110"
                   >
                     <PlusCircle size={16} />
                     <span>Nuevo Documento</span>
@@ -1503,7 +1808,7 @@ export default function App() {
               </div>
 
               {/* Barra de Filtro */}
-              <div className="flex flex-col sm:flex-row gap-3">
+              <div className="flex flex-col sm:flex-row gap-2">
                 <div className="relative flex-1">
                   <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
                   <input
@@ -1511,14 +1816,14 @@ export default function App() {
                     value={searchQuery}
                     onChange={e => setSearchQuery(e.target.value)}
                     placeholder="Buscar por título o contenido en el catálogo..."
-                    className="w-full pl-10 pr-4 py-2.5 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] focus:ring-1 focus:ring-[#3ecf8e] rounded-lg text-sm text-zinc-200 outline-none transition-colors"
+                    className="w-full pl-10 pr-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] focus:ring-1 focus:ring-[#3ecf8e] rounded-md text-sm text-zinc-200 outline-none transition-colors"
                   />
                 </div>
 
                 <select
                   value={selectedCategory}
                   onChange={e => setSelectedCategory(e.target.value)}
-                  className="px-3 py-2.5 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] rounded-lg text-sm text-zinc-300 outline-none w-full sm:w-56"
+                  className="px-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] rounded-md text-sm text-zinc-300 outline-none w-full sm:w-56"
                 >
                   <option value="">Todas las categorías</option>
                   {categories.map(c => (
@@ -1529,7 +1834,7 @@ export default function App() {
 
               {/* Grid de Tarjetas */}
               {filteredItems.length === 0 ? (
-                <div className="p-12 text-center bg-[#151720] border border-dashed border-[#1f2330] rounded-xl space-y-3">
+                <div className="p-4 text-center bg-[#1c1c1c] border border-dashed border-[#2e2e2e] rounded-md space-y-2">
                   <BookOpen size={36} className="mx-auto text-zinc-600" />
                   <p className="text-sm text-zinc-400">No se encontraron documentos que coincidan con la búsqueda.</p>
                   <button onClick={() => setActiveTab('add-text')} style={{ color: themeColor }} className="text-xs font-semibold hover:underline">
@@ -1537,19 +1842,19 @@ export default function App() {
                   </button>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
                   {filteredItems.map(item => (
-                    <div key={item.id} className="p-5 bg-[#151720] border border-[#1f2330] hover:border-zinc-700/80 rounded-xl flex flex-col justify-between gap-4 transition-all hover:-translate-y-0.5">
+                    <div key={item.id} className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] hover:border-zinc-700/80 rounded-md flex flex-col justify-between gap-2 transition-all hover:-translate-y-0.5">
                       <div className="space-y-2">
                         <div className="flex items-start justify-between gap-2">
-                          <h3 className="font-bold text-sm text-zinc-100 line-clamp-2 leading-snug">{item.title}</h3>
+                          <h3 className="font-medium text-sm text-zinc-100 line-clamp-2 leading-snug">{item.title}</h3>
                           <span
                             style={item.source_type !== 'url' ? {
                               backgroundColor: `rgba(${themeRgb}, 0.15)`,
                               color: themeColor,
                               borderColor: `rgba(${themeRgb}, 0.35)`
                             } : {}}
-                            className={`text-[10px] font-extrabold uppercase px-2 py-0.5 rounded tracking-wide shrink-0 border ${item.source_type === 'url' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : ''}`}
+                            className={`text-[10px] font-semibold uppercase px-2 py-0.5 rounded-md tracking-wide shrink-0 border ${item.source_type === 'url' ? 'bg-blue-500/10 text-blue-400 border-blue-500/20' : ''}`}
                           >
                             {item.source_type}
                           </span>
@@ -1565,15 +1870,15 @@ export default function App() {
                           )}
                         </div>
 
-                        <div className="font-mono text-xs text-zinc-400 bg-[#0e1017] p-3 rounded-lg border border-white/5 line-clamp-4 leading-relaxed">
+                        <div className="font-mono text-xs text-zinc-400 bg-[#141414] p-4 rounded-md border border-white/5 line-clamp-4 leading-relaxed">
                           {item.content}
                         </div>
                       </div>
 
-                      <div className="flex items-center justify-between pt-3 border-t border-[#1f2330]">
+                      <div className="flex items-center justify-between pt-2 border-t border-[#2e2e2e]">
                         <button
                           onClick={() => setSelectedDoc(item)}
-                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-zinc-400 hover:text-white bg-[#0e1017] hover:bg-zinc-800 border border-[#1f2330] rounded-md transition-colors"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium text-zinc-400 hover:text-white bg-[#141414] hover:bg-zinc-800 border border-[#2e2e2e] rounded-md transition-colors"
                         >
                           <Eye size={13} />
                           <span>Ver Completo</span>
@@ -1581,7 +1886,7 @@ export default function App() {
 
                         <button
                           onClick={() => handleDeleteItem(item.id)}
-                          className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-md transition-colors"
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 text-[13px] font-medium text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-md transition-colors"
                         >
                           <Trash2 size={13} />
                           <span>Eliminar</span>
@@ -1598,48 +1903,48 @@ export default function App() {
               TAB 2: NUEVO DOCUMENTO (ADD TEXT)
               ============================================================== */}
           {activeTab === 'add-text' && (
-            <div className="max-w-3xl space-y-6 animate-fadeIn">
+            <div className="max-w-3xl mx-auto space-y-6 animate-fadeIn">
               <div>
-                <h1 className="text-xl font-bold text-zinc-100">Nuevo Documento de Conocimiento</h1>
+                <h1 className="text-xl font-medium tracking-tight text-zinc-100">Nuevo Documento de Conocimiento</h1>
                 <p className="text-sm text-zinc-400 mt-1">Ingresa especificaciones técnicas, políticas de garantía, precios o manuales operativos.</p>
               </div>
 
-              <div className="p-6 bg-[#151720] border border-[#1f2330] rounded-xl">
-                <form onSubmit={handleCreateDoc} className="space-y-5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md">
+                <form onSubmit={handleCreateDoc} className="space-y-2">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Título del Documento *</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Título del Documento *</label>
                       <input
                         type="text"
                         required
                         value={newTitle}
                         onChange={e => setNewTitle(e.target.value)}
                         placeholder="Ej: Catálogo de Servicios y Precios 2026"
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] rounded-lg text-sm text-zinc-200 outline-none"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] rounded-md text-sm text-zinc-200 outline-none"
                       />
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Categoría</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Categoría</label>
                       <input
                         type="text"
                         value={newCategory}
                         onChange={e => setNewCategory(e.target.value)}
                         placeholder="Ej: precios, políticas, soporte"
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] rounded-lg text-sm text-zinc-200 outline-none"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] rounded-md text-sm text-zinc-200 outline-none"
                       />
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Contenido Detallado *</label>
+                    <label className="block text-xs font-medium text-zinc-300 mb-2">Contenido Detallado *</label>
                     <textarea
                       required
                       rows={10}
                       value={newContent}
                       onChange={e => setNewContent(e.target.value)}
                       placeholder="Redacta o pega aquí la información exacta que el bot debe utilizar..."
-                      className="w-full px-3.5 py-3 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] rounded-lg text-xs font-mono text-zinc-200 outline-none leading-relaxed"
+                      className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] rounded-md text-xs font-mono text-zinc-200 outline-none leading-relaxed"
                     />
                     <div className="flex justify-between items-center text-xs text-zinc-500 mt-2">
                       <span>Admite texto plano y Markdown. Se sanitiza a UTF-8 automáticamente.</span>
@@ -1647,11 +1952,11 @@ export default function App() {
                     </div>
                   </div>
 
-                  <div className="flex justify-end gap-3 pt-2">
+                  <div className="flex justify-end gap-2 pt-2">
                     <button
                       type="button"
                       onClick={() => setActiveTab('library')}
-                      className="px-4 py-2 border border-[#1f2330] hover:bg-zinc-800 text-zinc-300 font-semibold text-sm rounded-lg transition-colors"
+                      className="px-3 py-1.5 border border-[#2e2e2e] hover:bg-zinc-800 text-zinc-300 font-medium text-[13px] rounded-md transition-colors"
                     >
                       Cancelar
                     </button>
@@ -1660,7 +1965,7 @@ export default function App() {
                       type="submit"
                       disabled={isSavingText}
                       style={{ backgroundColor: themeColor }}
-                      className="inline-flex items-center gap-2 px-5 py-2 text-zinc-950 font-bold text-sm rounded-lg shadow-lg transition-all disabled:opacity-50 hover:brightness-110"
+                      className="inline-flex items-center gap-2 px-3 py-1.5 text-zinc-950 font-medium text-[13px] rounded-md transition-all disabled:opacity-50 hover:brightness-110"
                     >
                       {isSavingText ? (
                         <>
@@ -1684,19 +1989,19 @@ export default function App() {
               TAB 3: WEB SCRAPER & CRAWLER MULTI-URL (NUEVA FUNCIÓN)
               ============================================================== */}
           {activeTab === 'scrape' && (
-            <div className="max-w-4xl space-y-6 animate-fadeIn">
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+            <div className="max-w-4xl mx-auto space-y-6 animate-fadeIn">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div>
-                  <h1 className="text-xl font-bold text-zinc-100">Extractor Web Inteligente</h1>
+                  <h1 className="text-xl font-medium tracking-tight text-zinc-100">Extractor Web Inteligente</h1>
                   <p className="text-sm text-zinc-400 mt-1">Escanea páginas web individuales o mapea automáticamente todas las URLs de tu sitio web.</p>
                 </div>
 
                 {/* Selector de Modo */}
-                <div className="flex bg-[#111218] p-1 border border-[#1f2330] rounded-lg shrink-0">
+                <div className="flex bg-[#171717] p-1 border border-[#2e2e2e] rounded-md shrink-0">
                   <button
                     onClick={() => setScraperMode('crawler')}
                     style={scraperMode === 'crawler' ? { backgroundColor: themeColor } : {}}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${scraperMode === 'crawler' ? 'text-zinc-950 shadow' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${scraperMode === 'crawler' ? 'text-zinc-950 shadow' : 'text-zinc-400 hover:text-zinc-200'}`}
                   >
                     <Layers size={14} />
                     <span>Mapear Sitio Completo</span>
@@ -1704,7 +2009,7 @@ export default function App() {
                   <button
                     onClick={() => setScraperMode('single')}
                     style={scraperMode === 'single' ? { backgroundColor: themeColor } : {}}
-                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-bold transition-all ${scraperMode === 'single' ? 'text-zinc-950 shadow' : 'text-zinc-400 hover:text-zinc-200'}`}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${scraperMode === 'single' ? 'text-zinc-950 shadow' : 'text-zinc-400 hover:text-zinc-200'}`}
                   >
                     <Globe size={14} />
                     <span>Página Única</span>
@@ -1714,34 +2019,34 @@ export default function App() {
 
               {/* MODO 1: MAPEAR SITIO COMPLETO (CRAWLER / SITEMAP) */}
               {scraperMode === 'crawler' && (
-                <div className="space-y-6">
+                <div className="space-y-2">
                   {/* Formulario de Descubrimiento */}
-                  <div className="p-6 bg-[#151720] border border-[#1f2330] rounded-xl space-y-4">
-                    <div className="flex items-center gap-2 text-zinc-200 font-bold text-sm">
+                  <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md space-y-2">
+                    <div className="flex items-center gap-2 text-zinc-200 font-medium text-sm">
                       <Compass size={17} style={{ color: themeColor }} />
                       <span>Paso 1: Mapear URLs Internas del Sitio Web</span>
                     </div>
 
-                    <form onSubmit={handleCrawlSite} className="space-y-4">
-                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    <form onSubmit={handleCrawlSite} className="space-y-2">
+                      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                         <div className="sm:col-span-2">
-                          <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">URL Raíz del Sitio *</label>
+                          <label className="block text-xs font-medium text-zinc-300 mb-2">URL Raíz del Sitio *</label>
                           <input
                             type="url"
                             required
                             value={crawlerUrl}
                             onChange={e => setCrawlerUrl(e.target.value)}
                             placeholder="https://fantasmadigital.dev"
-                            className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] rounded-lg text-sm text-zinc-200 outline-none"
+                            className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] rounded-md text-sm text-zinc-200 outline-none"
                           />
                         </div>
 
                         <div>
-                          <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Máximo de URLs</label>
+                          <label className="block text-xs font-medium text-zinc-300 mb-2">Máximo de URLs</label>
                           <select
                             value={crawlerMaxUrls}
                             onChange={e => setCrawlerMaxUrls(e.target.value)}
-                            className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] rounded-lg text-sm text-zinc-200 outline-none"
+                            className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] rounded-md text-sm text-zinc-200 outline-none"
                           >
                             <option value="20">20 páginas</option>
                             <option value="40">40 páginas (Recomendado)</option>
@@ -1758,7 +2063,7 @@ export default function App() {
                           type="submit"
                           disabled={isCrawling}
                           style={{ backgroundColor: themeColor }}
-                          className="inline-flex items-center gap-2 px-5 py-2 text-zinc-950 font-bold text-sm rounded-lg shadow-lg transition-all disabled:opacity-50 hover:brightness-110"
+                          className="inline-flex items-center gap-2 px-3 py-1.5 text-zinc-950 font-medium text-[13px] rounded-md transition-all disabled:opacity-50 hover:brightness-110"
                         >
                           {isCrawling ? (
                             <>
@@ -1778,13 +2083,13 @@ export default function App() {
 
                   {/* Resultados del Mapeo: Lista de URLs encontradas */}
                   {discoveredUrls.length > 0 && (
-                    <div className="p-6 bg-[#151720] border border-[#1f2330] rounded-xl space-y-4 animate-scaleUp">
-                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-3 border-b border-[#1f2330]">
+                    <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md space-y-2 animate-scaleUp">
+                      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-2 border-b border-[#2e2e2e]">
                         <div>
                           <div className="flex items-center gap-2">
-                            <h3 className="font-bold text-base text-zinc-100">URLs Detectadas ({discoveredUrls.length} páginas)</h3>
+                            <h3 className="font-medium text-base text-zinc-100">URLs Detectadas ({discoveredUrls.length} páginas)</h3>
                             <span
-                              className="px-2 py-0.5 rounded text-xs font-bold border"
+                              className="px-2 py-0.5 rounded-md text-xs font-medium border"
                               style={{
                                 backgroundColor: `rgba(${themeRgb}, 0.12)`,
                                 borderColor: `rgba(${themeRgb}, 0.3)`,
@@ -1801,14 +2106,14 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => toggleSelectAllUrls(true)}
-                            className="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded font-medium transition-colors"
+                            className="px-3 py-1 text-[13px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md font-medium transition-colors"
                           >
                             Seleccionar Todas
                           </button>
                           <button
                             type="button"
                             onClick={() => toggleSelectAllUrls(false)}
-                            className="px-2.5 py-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded font-medium transition-colors"
+                            className="px-3 py-1 text-[13px] bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md font-medium transition-colors"
                           >
                             Deseleccionar
                           </button>
@@ -1824,16 +2129,16 @@ export default function App() {
                               backgroundColor: `rgba(${themeRgb}, 0.12)`,
                               borderColor: `rgba(${themeRgb}, 0.4)`
                             } : {}}
-                            className={`flex items-center justify-between px-3.5 py-2.5 rounded-lg border text-xs cursor-pointer select-none transition-colors ${item.selected ? 'text-zinc-100 font-medium' : 'bg-[#0e1017] border-[#1f2330] text-zinc-400 hover:border-zinc-700'}`}
+                            className={`flex items-center justify-between px-4 py-3 rounded-md border text-xs cursor-pointer select-none transition-colors ${item.selected ? 'text-zinc-100 font-medium' : 'bg-[#141414] border-[#2e2e2e] text-zinc-400 hover:border-zinc-700'}`}
                           >
-                            <div className="flex items-center gap-3 overflow-hidden">
+                            <div className="flex items-center gap-2 overflow-hidden">
                               <span className="text-zinc-500 font-mono text-[11px] w-6 shrink-0">{idx + 1}.</span>
                               <input
                                 type="checkbox"
                                 checked={item.selected}
                                 onChange={() => toggleUrlSelection(item.url)}
                                 style={{ accentColor: themeColor }}
-                                className="w-4 h-4 rounded cursor-pointer shrink-0"
+                                className="w-4 h-4 rounded-md cursor-pointer shrink-0"
                               />
                               <span className="font-mono text-zinc-200 font-medium truncate">{item.path}</span>
                             </div>
@@ -1853,15 +2158,15 @@ export default function App() {
                       </div>
 
                       {/* Paso 2: Acción de Indexación en Lote */}
-                      <div className="pt-4 border-t border-[#1f2330] flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                        <div className="flex items-center gap-3">
-                          <label className="text-xs font-bold text-zinc-400 uppercase tracking-wider">Categoría:</label>
+                      <div className="pt-2 border-t border-[#2e2e2e] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <label className="text-xs font-medium text-zinc-400">Categoría:</label>
                           <input
                             type="text"
                             value={crawlerCategory}
                             onChange={e => setCrawlerCategory(e.target.value)}
                             placeholder="sitio-web"
-                            className="px-3 py-1.5 bg-[#0e1017] border border-[#1f2330] rounded-md text-xs text-zinc-200 outline-none w-36"
+                            className="px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none w-36"
                           />
                         </div>
 
@@ -1870,7 +2175,7 @@ export default function App() {
                           onClick={handleBatchIndexUrls}
                           disabled={isBatchIndexing || selectedUrlsCount === 0}
                           style={{ backgroundColor: themeColor }}
-                          className="inline-flex items-center gap-2 px-6 py-2.5 text-zinc-950 font-bold text-sm rounded-lg shadow-lg transition-all disabled:opacity-50 hover:brightness-110"
+                          className="inline-flex items-center gap-2 px-3 py-1.5 text-zinc-950 font-medium text-[13px] rounded-md transition-all disabled:opacity-50 hover:brightness-110"
                         >
                           {isBatchIndexing ? (
                             <>
@@ -1892,35 +2197,35 @@ export default function App() {
 
               {/* MODO 2: PÁGINA ÚNICA */}
               {scraperMode === 'single' && (
-                <div className="p-6 bg-[#151720] border border-[#1f2330] rounded-xl space-y-5 animate-scaleUp">
-                  <form onSubmit={handleSingleScrape} className="space-y-5">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md space-y-2 animate-scaleUp">
+                  <form onSubmit={handleSingleScrape} className="space-y-2">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">URL del Sitio Web *</label>
+                        <label className="block text-xs font-medium text-zinc-300 mb-2">URL del Sitio Web *</label>
                         <input
                           type="url"
                           required
                           value={scrapeUrl}
                           onChange={e => setScrapeUrl(e.target.value)}
                           placeholder="https://tuempresa.com/servicios"
-                          className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] rounded-lg text-sm text-zinc-200 outline-none"
+                          className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] rounded-md text-sm text-zinc-200 outline-none"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Categoría</label>
+                        <label className="block text-xs font-medium text-zinc-300 mb-2">Categoría</label>
                         <input
                           type="text"
                           value={scrapeCategory}
                           onChange={e => setScrapeCategory(e.target.value)}
                           placeholder="Ej: sitio-web, landing"
-                          className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] rounded-lg text-sm text-zinc-200 outline-none"
+                          className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] rounded-md text-sm text-zinc-200 outline-none"
                         />
                       </div>
                     </div>
 
                     <div
-                      className="p-4 rounded-lg text-xs text-zinc-400 leading-relaxed border"
+                      className="p-2 rounded-md text-xs text-zinc-400 leading-relaxed border"
                       style={{
                         backgroundColor: `rgba(${themeRgb}, 0.08)`,
                         borderColor: `rgba(${themeRgb}, 0.3)`
@@ -1935,7 +2240,7 @@ export default function App() {
                         type="submit"
                         disabled={isScraping}
                         style={{ backgroundColor: themeColor }}
-                        className="inline-flex items-center gap-2 px-5 py-2 text-zinc-950 font-bold text-sm rounded-lg shadow-lg transition-all disabled:opacity-50 hover:brightness-110"
+                        className="inline-flex items-center gap-2 px-3 py-1.5 text-zinc-950 font-medium text-[13px] rounded-md transition-all disabled:opacity-50 hover:brightness-110"
                       >
                         {isScraping ? (
                           <>
@@ -1962,30 +2267,30 @@ export default function App() {
           {activeTab === 'chat' && (
             <div className="max-w-4xl space-y-6 animate-fadeIn">
               <div>
-                <h1 className="text-xl font-bold text-zinc-100">Playground de Conversación</h1>
+                <h1 className="text-xl font-medium tracking-tight text-zinc-100">Playground de Conversación</h1>
                 <p className="text-sm text-zinc-400 mt-1">Interactúa con el asistente para comprobar cómo responde con base en tu nuevo catálogo y políticas.</p>
               </div>
 
-              <div className="flex flex-col h-[580px] bg-[#111218] border border-[#1f2330] rounded-xl overflow-hidden shadow-2xl">
+              <div className="flex flex-col h-[580px] bg-[#171717] border border-[#2e2e2e] rounded-md overflow-hidden">
                 {/* Chat Top Banner */}
-                <div className="px-5 py-3 bg-[#0e1017] border-b border-[#1f2330] flex items-center justify-between">
-                  <div className="flex items-center gap-3">
+                <div className="px-4 py-3 bg-[#141414] border-b border-[#2e2e2e] flex items-center justify-between">
+                  <div className="flex items-center gap-2">
                     {stats.bot_avatar ? (
                       <img
                         src={stats.bot_avatar}
                         alt="Bot Avatar"
-                        className="w-8 h-8 rounded-full object-cover border border-[#1f2330] shadow-sm"
+                        className="w-8 h-8 rounded-full object-cover border border-[#2e2e2e] shadow-sm"
                       />
                     ) : (
                       <div
-                        className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-sm"
+                        className="w-8 h-8 rounded-full flex items-center justify-center text-white text-xs font-medium shadow-sm"
                         style={{ backgroundColor: themeColor }}
                       >
                         <Bot size={16} />
                       </div>
                     )}
                     <div>
-                      <div className="text-xs font-bold text-zinc-200 flex items-center gap-1.5">
+                      <div className="text-xs font-medium text-zinc-200 flex items-center gap-1.5">
                         <span>{stats.bot_name || 'Asistente Operativo'}</span>
                         <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: themeColor }}></span>
                       </div>
@@ -1994,7 +2299,7 @@ export default function App() {
                   </div>
                   <div className="flex items-center gap-2">
                     {(stats.effective_support_phone || stats.support_phone) && (
-                      <span className="hidden sm:inline-flex text-[11px] text-zinc-300 items-center gap-1.5 bg-zinc-900/90 px-2.5 py-1 rounded-md border border-[#1f2330]">
+                      <span className="hidden sm:inline-flex text-[11px] text-zinc-300 items-center gap-1.5 bg-zinc-900/90 px-2.5 py-1 rounded-md border border-[#2e2e2e]">
                         <PhoneCall size={12} style={{ color: themeColor }} />
                         <span className="text-zinc-500 text-[10px]">Soporte:</span>
                         <span className="font-mono">{stats.effective_support_phone || stats.support_phone}</span>
@@ -2006,7 +2311,7 @@ export default function App() {
                         text: stats.welcome_message || '¡Hola! Soy tu Asistente Operativo. Pregúntame sobre los servicios, garantías, precios o cualquier dato indexado en la base de datos.',
                         isCustomized: true
                       }])}
-                      className="px-2.5 py-1 bg-zinc-800/60 hover:bg-zinc-800 border border-[#1f2330] rounded-md text-[11px] text-zinc-300 transition-colors"
+                      className="px-3 py-1 bg-zinc-800/60 hover:bg-zinc-800 border border-[#2e2e2e] rounded-md text-[11px] text-zinc-300 transition-colors"
                       title="Reiniciar conversación"
                     >
                       Reiniciar
@@ -2016,7 +2321,7 @@ export default function App() {
 
                 {/* Banner de Silencio de IA / Agente Humano Activo (Playground) */}
                 {activeHandoffs.some(h => h.session_id === 'react-playground-session') && (
-                  <div className="px-5 py-2.5 bg-amber-950/70 border-b border-amber-800/60 flex items-center justify-between gap-3 text-xs text-amber-200">
+                  <div className="px-3 py-1.5 bg-amber-950/70 border-b border-amber-800/60 flex items-center justify-between gap-2 text-xs text-amber-200">
                     <div className="flex items-center gap-2">
                       <Clock size={15} className="text-amber-400 shrink-0" />
                       <span>
@@ -2027,7 +2332,7 @@ export default function App() {
                       type="button"
                       onClick={() => handleReleaseHandoff('react-playground-session')}
                       style={{ backgroundColor: themeColor }}
-                      className="px-2.5 py-1 text-zinc-950 font-bold rounded text-[11px] transition-colors shrink-0 shadow hover:brightness-110"
+                      className="px-3 py-1 text-zinc-950 font-medium rounded-md text-[11px] transition-colors shrink-0 shadow hover:brightness-110"
                     >
                       ▶️ Reanudar IA Ahora
                     </button>
@@ -2035,15 +2340,15 @@ export default function App() {
                 )}
 
                 {/* Messages Box */}
-                <div className="flex-1 p-6 overflow-y-auto space-y-4">
+                <div className="flex-1 p-2 overflow-y-auto space-y-2">
                   {messages.map((m, idx) => (
-                    <div key={idx} className={`flex items-start gap-2.5 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    <div key={idx} className={`flex items-start gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                       {m.role === 'assistant' && (
                         stats.bot_avatar ? (
                           <img
                             src={stats.bot_avatar}
                             alt="Avatar"
-                            className="w-8 h-8 rounded-full object-cover shrink-0 border border-[#1f2330] mt-0.5 shadow-sm"
+                            className="w-8 h-8 rounded-full object-cover shrink-0 border border-[#2e2e2e] mt-0.5 shadow-sm"
                           />
                         ) : (
                           <div
@@ -2055,47 +2360,147 @@ export default function App() {
                         )
                       )}
                       <div
-                        className={`max-w-[85%] px-4 py-3 rounded-xl text-sm leading-relaxed ${m.role === 'user'
+                        className={`max-w-[85%] px-3 py-1.5 rounded-md text-sm leading-relaxed ${m.role === 'user'
                             ? 'text-white rounded-br-none shadow-sm'
-                            : 'bg-[#181a24] text-zinc-200 border border-[#1f2330] rounded-bl-none shadow-md'
+                            : 'bg-[#232323] text-zinc-200 border border-[#2e2e2e] rounded-bl-none'
                           }`}
                         style={m.role === 'user' ? { backgroundColor: themeColor } : {}}
                       >
-                        <FormattedChatMessage text={m.text} isUser={m.role === 'user'} />
+                        {m.imageUrl && (
+                          <div className="mb-2 rounded-md overflow-hidden border border-white/20 max-w-xs bg-black/40">
+                            <img src={m.imageUrl} alt="Comprobante adjunto" className="max-h-48 w-auto object-cover rounded-md" />
+                          </div>
+                        )}
+                        {m.audioUrl && (
+                          <div className="mb-2 flex items-center gap-2 bg-black/30 px-2.5 py-1.5 rounded-md border border-white/10">
+                            <span className="text-xs font-semibold">🎙️ Nota de voz</span>
+                            <audio src={m.audioUrl} controls className="h-7 w-48" />
+                          </div>
+                        )}
+                        {m.text && <FormattedChatMessage text={m.text} isUser={m.role === 'user'} />}
                       </div>
                     </div>
                   ))}
                   {isChatLoading && (
-                    <div className="flex justify-start items-center gap-2.5">
+                    <div className="flex justify-start items-center gap-2">
                       {stats.bot_avatar ? (
-                        <img src={stats.bot_avatar} alt="Avatar" className="w-8 h-8 rounded-full object-cover shrink-0 border border-[#1f2330]" />
+                        <img src={stats.bot_avatar} alt="Avatar" className="w-8 h-8 rounded-full object-cover shrink-0 border border-[#2e2e2e]" />
                       ) : (
                         <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-white" style={{ backgroundColor: themeColor }}>
                           <Bot size={15} />
                         </div>
                       )}
-                      <div className="px-4 py-3 bg-[#181a24] border border-[#1f2330] rounded-xl text-xs text-zinc-400 flex items-center gap-2">
+                      <div className="px-3 py-1.5 bg-[#232323] border border-[#2e2e2e] rounded-md text-xs text-zinc-400 flex items-center gap-2">
                         <RefreshCw size={14} className="animate-spin" style={{ color: themeColor }} />
-                        <span>Escribiendo respuesta...</span>
+                        <span>Escuchando / Analizando y redactando respuesta...</span>
                       </div>
                     </div>
                   )}
                 </div>
 
+                {/* Banner de archivo adjunto (Audio o Imagen) */}
+                {(chatAudioBlobUrl || chatImagePreview) && (
+                  <div className="px-3 py-1.5 bg-[#12141c] border-t border-[#2e2e2e] flex items-center justify-between text-xs text-zinc-300">
+                    <div className="flex items-center gap-2">
+                      {chatImagePreview && (
+                        <div className="flex items-center gap-2">
+                          <img src={chatImagePreview} alt="Preview" className="w-9 h-9 object-cover rounded-md border border-white/10" />
+                          <span>🖼️ Comprobante / Imagen adjunta</span>
+                        </div>
+                      )}
+                      {chatAudioBlobUrl && (
+                        <div className="flex items-center gap-2">
+                          <span className="text-emerald-400 font-semibold">🎙️ Audio preparado</span>
+                          <audio src={chatAudioBlobUrl} controls className="h-6 w-36" />
+                        </div>
+                      )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChatAudioBase64(null);
+                        setChatAudioBlobUrl(null);
+                        setChatImageBase64(null);
+                        setChatImagePreview(null);
+                      }}
+                      className="p-1 hover:bg-zinc-800 rounded-md text-zinc-400 hover:text-rose-400 transition-colors"
+                      title="Quitar archivo adjunto"
+                    >
+                      <X size={15} />
+                    </button>
+                  </div>
+                )}
+
+                {/* Hidden File Inputs */}
+                <input
+                  type="file"
+                  ref={chatImageInputRef}
+                  onChange={handleImageFileUpload}
+                  accept="image/*"
+                  className="hidden"
+                />
+                <input
+                  type="file"
+                  ref={chatAudioInputRef}
+                  onChange={handleAudioFileUpload}
+                  accept="audio/*"
+                  className="hidden"
+                />
+
                 {/* Input Bar */}
-                <form onSubmit={handleSendMessage} className="p-4 bg-[#0e1017] border-t border-[#1f2330] flex gap-3">
+                <form onSubmit={handleSendMessage} className="p-4 bg-[#141414] border-t border-[#2e2e2e] flex items-center gap-2">
+                  {/* Botón Adjuntar Imagen / Comprobante */}
+                  <button
+                    type="button"
+                    onClick={() => chatImageInputRef.current?.click()}
+                    title="Adjuntar comprobante de pago o imagen"
+                    className="p-2 bg-[#1c1c1c] hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-[#2e2e2e] rounded-md transition-colors shrink-0"
+                  >
+                    <ImageIcon size={18} />
+                  </button>
+
+                  {/* Botón Subir Archivo de Audio */}
+                  <button
+                    type="button"
+                    onClick={() => chatAudioInputRef.current?.click()}
+                    title="Subir archivo de audio o nota de voz"
+                    className="p-2 bg-[#1c1c1c] hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border border-[#2e2e2e] rounded-md transition-colors shrink-0"
+                  >
+                    <Paperclip size={18} />
+                  </button>
+
+                  {/* Botón Grabar Micrófono */}
+                  <button
+                    type="button"
+                    onClick={isRecording ? stopRecordingAudio : startRecordingAudio}
+                    title={isRecording ? 'Detener grabación' : 'Grabar nota de voz con micrófono'}
+                    className={`p-2 rounded-md border transition-all shrink-0 flex items-center gap-1.5 text-xs font-semibold ${
+                      isRecording
+                        ? 'bg-rose-600 text-white border-rose-500 animate-pulse'
+                        : 'bg-[#1c1c1c] hover:bg-zinc-800 text-zinc-400 hover:text-zinc-200 border-[#2e2e2e]'
+                    }`}
+                  >
+                    {isRecording ? <MicOff size={18} /> : <Mic size={18} />}
+                    {isRecording && <span>Grabando...</span>}
+                  </button>
+
                   <input
                     type="text"
                     value={chatInput}
                     onChange={e => setChatInput(e.target.value)}
-                    placeholder="Haz una pregunta como si fueras un cliente en WhatsApp..."
-                    className="flex-1 px-4 py-2.5 bg-[#151720] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none focus:border-zinc-500"
+                    placeholder={
+                      isRecording
+                        ? 'Grabando audio de voz...'
+                        : 'Escribe un mensaje, o prueba enviando una nota de voz / comprobante...'
+                    }
+                    className="flex-1 px-3 py-2 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none focus:border-zinc-500"
                   />
+
                   <button
                     type="submit"
-                    disabled={isChatLoading}
+                    disabled={isChatLoading || (!chatInput.trim() && !chatAudioBase64 && !chatImageBase64)}
                     style={{ backgroundColor: themeColor }}
-                    className="px-4 py-2.5 text-zinc-950 font-bold rounded-lg text-sm transition-all disabled:opacity-50 flex items-center gap-2 shrink-0 hover:brightness-110"
+                    className="px-3 py-1.5 text-zinc-950 font-medium rounded-md text-[13px] transition-all disabled:opacity-40 flex items-center gap-2 shrink-0 hover:brightness-110"
                   >
                     <span>Enviar</span>
                     <Send size={15} />
@@ -2109,14 +2514,11 @@ export default function App() {
               TAB: WHATSAPP GATEWAY (VINCULACIÓN QR & MONITOREO EN VIVO)
               ============================================================== */}
           {activeTab === 'whatsapp' && (
-            <div className="space-y-6 animate-fadeIn pb-12">
+            <div className="space-y-6 animate-fadeIn pb-2">
               {/* Header de Sección */}
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[#1f2330]">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div>
-                  <div className="flex items-center gap-2">
-                    <MessageCircle size={22} style={{ color: themeColor }} />
-                    <h1 className="text-xl font-bold text-zinc-100">Conexión WhatsApp Web & Gateway</h1>
-                  </div>
+                  <h1 className="text-xl font-medium tracking-tight text-zinc-100">Conexión WhatsApp Web & Gateway</h1>
                   <p className="text-sm text-zinc-400 mt-1">
                     Vincula tu número de WhatsApp para que el Asistente Operativo IA responda de forma autónoma con Baileys Multi-Device.
                   </p>
@@ -2127,7 +2529,7 @@ export default function App() {
                     href="http://localhost:3000/qr"
                     target="_blank"
                     rel="noreferrer"
-                    className="inline-flex items-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 hover:text-white rounded-lg text-xs font-semibold border border-[#1f2330] transition-all"
+                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#232323] hover:bg-[#2e2e2e] text-zinc-200 rounded-md text-[13px] font-medium border border-[#2e2e2e] transition-all"
                   >
                     <span>Abrir /qr Independiente</span>
                     <ExternalLink size={13} />
@@ -2139,7 +2541,7 @@ export default function App() {
                       showToast('🔄 Estado de WhatsApp actualizado');
                     }}
                     disabled={isRefreshingWa}
-                    className="inline-flex items-center gap-2 px-3.5 py-2 bg-[#151720] hover:bg-zinc-800 border border-[#1f2330] text-zinc-200 rounded-lg text-xs font-semibold transition-all disabled:opacity-50"
+                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#1c1c1c] hover:bg-zinc-800 border border-[#2e2e2e] text-zinc-200 rounded-md text-[13px] font-medium transition-all disabled:opacity-50"
                   >
                     <RefreshCw size={13} className={isRefreshingWa ? 'animate-spin' : ''} style={{ color: themeColor }} />
                     <span>Actualizar</span>
@@ -2147,17 +2549,28 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Grid Principal */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+              {/* Selector de canal: Baileys (QR) o Meta Cloud API oficial */}
+              <WhatsAppChannelPanel
+                themeColor={themeColor}
+                showToast={showToast}
+                onChannelChange={(channel) => {
+                  setWaChannel(channel);
+                  fetchWhatsAppStatus();
+                }}
+              />
 
-                {/* Columna Izquierda: Estado de la Vinculación / Código QR */}
-                <div className="lg:col-span-7 space-y-6">
-                  <div className="p-6 bg-[#111218] border border-[#1f2330] rounded-2xl shadow-xl space-y-6">
+              {/* Grid Principal */}
+              <div className="grid grid-cols-1 lg:grid-cols-12 gap-3">
+
+                {/* Columna Izquierda: Estado de la Vinculación / Código QR (solo canal Baileys) */}
+                {waChannel !== 'meta' && (
+                <div className="lg:col-span-7 space-y-2">
+                  <div className="p-4 bg-[#171717] border border-[#2e2e2e] rounded-md space-y-2">
                     {/* Header de la tarjeta */}
                     <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
+                      <div className="flex items-center gap-2">
                         <div
-                          className="w-10 h-10 rounded-xl flex items-center justify-center font-bold shadow-md"
+                          className="w-10 h-10 rounded-md flex items-center justify-center font-medium"
                           style={{
                             backgroundColor: `rgba(${themeRgb}, 0.14)`,
                             color: themeColor,
@@ -2167,14 +2580,14 @@ export default function App() {
                           <Smartphone size={20} />
                         </div>
                         <div>
-                          <h2 className="text-base font-bold text-zinc-100">Estado de la Sesión</h2>
+                          <h2 className="text-base font-medium text-zinc-100">Estado de la Sesión</h2>
                           <p className="text-xs text-zinc-400">Microservicio Socket Baileys</p>
                         </div>
                       </div>
 
                       {/* Status Pill */}
                       <div
-                        className={`inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-xs font-extrabold uppercase tracking-wider font-mono border ${
+                        className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-full text-xs font-semibold font-mono border ${
                           waStatus.connected || waStatus.status === 'CONNECTED'
                             ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/35'
                             : waStatus.status === 'WAITING_QR'
@@ -2201,11 +2614,11 @@ export default function App() {
 
                     {/* Contenido Dinámico según Estado */}
                     {(waStatus.connected || waStatus.status === 'CONNECTED') ? (
-                      <div className="space-y-6 pt-2">
+                      <div className="space-y-2 pt-2">
                         {/* Hero Card Conectado */}
-                        <div className="p-6 bg-[#161922] border border-[#1f2330] rounded-xl text-center space-y-4">
+                        <div className="p-2 bg-[#232323] border border-[#2e2e2e] rounded-md text-center space-y-2">
                           <div
-                            className="w-16 h-16 rounded-2xl mx-auto flex items-center justify-center border-2 shadow-lg"
+                            className="w-16 h-16 rounded-md mx-auto flex items-center justify-center border-2"
                             style={{
                               backgroundColor: `rgba(${themeRgb}, 0.15)`,
                               borderColor: themeColor,
@@ -2216,16 +2629,16 @@ export default function App() {
                           </div>
 
                           <div>
-                            <h3 className="text-lg font-bold text-white">Dispositivo Vinculado Exitosamente</h3>
+                            <h3 className="text-lg font-medium text-white">Dispositivo Vinculado Exitosamente</h3>
                             <p className="text-xs text-zinc-400 mt-1">
                               El bot está activo y procesando mensajes entrantes en tiempo real con IA.
                             </p>
                           </div>
 
                           {/* Número y Badge */}
-                          <div className="inline-flex items-center gap-2 bg-[#0e1017] border border-[#1f2330] px-4 py-2 rounded-xl">
+                          <div className="inline-flex items-center gap-2 bg-[#141414] border border-[#2e2e2e] px-4 py-3 rounded-md">
                             <span className="text-base">📱</span>
-                            <span className="font-mono text-base font-bold text-white tracking-wide">
+                            <span className="font-mono text-base font-medium text-white tracking-wide">
                               {waStatus.phone_number || stats.detected_whatsapp_phone || 'Número Conectado'}
                             </span>
                             <button
@@ -2240,41 +2653,41 @@ export default function App() {
 
                         {/* Metadatos y Capacidades */}
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <div className="p-3.5 bg-[#161922] border border-[#1f2330] rounded-xl flex items-center gap-3">
+                          <div className="p-2 bg-[#232323] border border-[#2e2e2e] rounded-md flex items-center gap-2">
                             <Bot size={20} style={{ color: themeColor }} className="shrink-0" />
                             <div className="min-w-0">
-                              <span className="text-[11px] text-zinc-400 block uppercase font-bold tracking-wider">Motor Activo</span>
-                              <span className="text-xs font-bold text-zinc-200 truncate block">
+                              <span className="text-[11px] text-zinc-400 block uppercase font-medium tracking-wider">Motor Activo</span>
+                              <span className="text-xs font-medium text-zinc-200 truncate block">
                                 {stats.active_provider.toUpperCase()} ({stats.active_model})
                               </span>
                             </div>
                           </div>
 
-                          <div className="p-3.5 bg-[#161922] border border-[#1f2330] rounded-xl flex items-center gap-3">
+                          <div className="p-2 bg-[#232323] border border-[#2e2e2e] rounded-md flex items-center gap-2">
                             <Zap size={20} className="text-amber-400 shrink-0" />
                             <div className="min-w-0">
-                              <span className="text-[11px] text-zinc-400 block uppercase font-bold tracking-wider">In-Memory Hot Cache</span>
-                              <span className="text-xs font-bold text-zinc-200 block">
+                              <span className="text-[11px] text-zinc-400 block uppercase font-medium tracking-wider">In-Memory Hot Cache</span>
+                              <span className="text-xs font-medium text-zinc-200 block">
                                 &lt; 1 ms (Catálogo en RAM)
                               </span>
                             </div>
                           </div>
 
-                          <div className="p-3.5 bg-[#161922] border border-[#1f2330] rounded-xl flex items-center gap-3">
+                          <div className="p-2 bg-[#232323] border border-[#2e2e2e] rounded-md flex items-center gap-2">
                             <ShieldCheck size={20} className="text-sky-400 shrink-0" />
                             <div className="min-w-0">
-                              <span className="text-[11px] text-zinc-400 block uppercase font-bold tracking-wider">Reconexión Automática</span>
-                              <span className="text-xs font-bold text-zinc-200 block">
+                              <span className="text-[11px] text-zinc-400 block uppercase font-medium tracking-wider">Reconexión Automática</span>
+                              <span className="text-xs font-medium text-zinc-200 block">
                                 Infinita con Backoff
                               </span>
                             </div>
                           </div>
 
-                          <div className="p-3.5 bg-[#161922] border border-[#1f2330] rounded-xl flex items-center gap-3">
+                          <div className="p-2 bg-[#232323] border border-[#2e2e2e] rounded-md flex items-center gap-2">
                             <Clock size={20} className="text-purple-400 shrink-0" />
                             <div className="min-w-0">
-                              <span className="text-[11px] text-zinc-400 block uppercase font-bold tracking-wider">Handoff a Humano</span>
-                              <span className="text-xs font-bold text-zinc-200 block">
+                              <span className="text-[11px] text-zinc-400 block uppercase font-medium tracking-wider">Handoff a Humano</span>
+                              <span className="text-xs font-medium text-zinc-200 block">
                                 Silencio de {stats.handoff_inactivity_hours || 6}h
                               </span>
                             </div>
@@ -2286,7 +2699,7 @@ export default function App() {
                           <button
                             onClick={handleWhatsAppLogout}
                             disabled={isLoggingOutWa}
-                            className="w-full flex items-center justify-center gap-2 px-4 py-3 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/30 rounded-xl font-bold text-sm transition-all disabled:opacity-50"
+                            className="w-full flex items-center justify-center gap-2 px-3 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 hover:text-rose-300 border border-rose-500/30 rounded-md font-medium text-[13px] transition-all disabled:opacity-50"
                           >
                             <LogOut size={16} />
                             <span>{isLoggingOutWa ? 'Desvinculando Sesión...' : 'Desvincular Dispositivo de WhatsApp'}</span>
@@ -2294,19 +2707,19 @@ export default function App() {
                         </div>
                       </div>
                     ) : waStatus.status === 'WAITING_QR' ? (
-                      <div className="space-y-6 pt-2 text-center">
+                      <div className="space-y-2 pt-2 text-center">
                         {/* Marco del Código QR */}
-                        <div className="inline-block p-4 bg-white rounded-2xl shadow-2xl border-2 border-zinc-700/60 mx-auto">
+                        <div className="inline-block p-2 bg-white rounded-md border-2 border-zinc-700/60 mx-auto">
                           {waQrData.qrDataUrl ? (
                             <img
                               src={waQrData.qrDataUrl}
                               alt="Código QR WhatsApp"
-                              className="w-60 h-60 block object-contain mx-auto rounded-lg"
+                              className="w-60 h-60 block object-contain mx-auto rounded-md"
                             />
                           ) : (
                             <div className="w-60 h-60 flex flex-col items-center justify-center text-zinc-700">
                               <RefreshCw size={28} className="animate-spin mb-2" />
-                              <span className="text-xs font-bold">Generando QR seguro...</span>
+                              <span className="text-xs font-medium">Generando QR seguro...</span>
                             </div>
                           )}
                         </div>
@@ -2317,31 +2730,31 @@ export default function App() {
                         </div>
 
                         {/* Instrucciones de Escaneo */}
-                        <div className="p-4 bg-[#161922] border border-[#1f2330] rounded-xl text-left space-y-3">
-                          <span className="text-xs font-bold text-zinc-300 uppercase tracking-wider block">
+                        <div className="p-2 bg-[#232323] border border-[#2e2e2e] rounded-md text-left space-y-2">
+                          <span className="text-xs font-medium text-zinc-300 block">
                             ¿Cómo vincular tu WhatsApp?
                           </span>
                           <div className="space-y-2 text-xs text-zinc-300 leading-relaxed">
-                            <div className="flex items-start gap-2.5">
-                              <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-200 font-bold flex items-center justify-center shrink-0 text-[11px]">1</span>
+                            <div className="flex items-start gap-2">
+                              <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-200 font-medium flex items-center justify-center shrink-0 text-[11px]">1</span>
                               <span>Abre <strong>WhatsApp</strong> en tu teléfono móvil.</span>
                             </div>
-                            <div className="flex items-start gap-2.5">
-                              <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-200 font-bold flex items-center justify-center shrink-0 text-[11px]">2</span>
+                            <div className="flex items-start gap-2">
+                              <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-200 font-medium flex items-center justify-center shrink-0 text-[11px]">2</span>
                               <span>Ve a <strong>Ajustes</strong> (iPhone) o pulsa <strong>Menú ⋮</strong> (Android) &gt; <strong>Dispositivos vinculados</strong>.</span>
                             </div>
-                            <div className="flex items-start gap-2.5">
-                              <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-200 font-bold flex items-center justify-center shrink-0 text-[11px]">3</span>
+                            <div className="flex items-start gap-2">
+                              <span className="w-5 h-5 rounded-full bg-zinc-800 text-zinc-200 font-medium flex items-center justify-center shrink-0 text-[11px]">3</span>
                               <span>Toca <strong>Vincular un dispositivo</strong> y apunta tu cámara al código QR de arriba.</span>
                             </div>
                           </div>
                         </div>
                       </div>
                     ) : (
-                      <div className="py-12 text-center space-y-4">
+                      <div className="py-3 text-center space-y-2">
                         <RefreshCw size={36} className="animate-spin mx-auto text-sky-400" />
                         <div>
-                          <h3 className="text-base font-bold text-zinc-100">
+                          <h3 className="text-base font-medium text-zinc-100">
                             {waStatus.status === 'CONNECTING' ? 'Estableciendo Conexión...' : 'Reconectando Socket...'}
                           </h3>
                           <p className="text-xs text-zinc-400 mt-1 max-w-sm mx-auto">
@@ -2350,7 +2763,7 @@ export default function App() {
                         </div>
                         <button
                           onClick={fetchWhatsAppStatus}
-                          className="px-4 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg border border-[#1f2330] transition-all"
+                          className="px-3 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[13px] font-medium rounded-md border border-[#2e2e2e] transition-all"
                         >
                           Verificar Estado Ahora
                         </button>
@@ -2358,22 +2771,23 @@ export default function App() {
                     )}
                   </div>
                 </div>
+                )}
 
                 {/* Columna Derecha: Probador de Envíos en Vivo & Arquitectura */}
-                <div className="lg:col-span-5 space-y-6">
+                <div className={`${waChannel === 'meta' ? 'lg:col-span-12' : 'lg:col-span-5'} space-y-2`}>
                   {/* Tarjeta 1: Enviar Mensaje de Prueba */}
-                  <div className="p-6 bg-[#111218] border border-[#1f2330] rounded-2xl shadow-xl space-y-4">
+                  <div className="p-4 bg-[#171717] border border-[#2e2e2e] rounded-md space-y-2">
                     <div className="flex items-center gap-2">
                       <Send size={18} style={{ color: themeColor }} />
-                      <h2 className="text-base font-bold text-zinc-100">Prueba de Envío Directo</h2>
+                      <h2 className="text-base font-medium text-zinc-100">Prueba de Envío Directo</h2>
                     </div>
                     <p className="text-xs text-zinc-400">
                       Envía un mensaje de prueba a cualquier número de WhatsApp para comprobar la conexión activa del microservicio.
                     </p>
 
-                    <form onSubmit={handleSendTestWa} className="space-y-4 pt-1">
+                    <form onSubmit={handleSendTestWa} className="space-y-2 pt-1">
                       <div>
-                        <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1.5">
+                        <label className="block text-xs font-medium text-zinc-300 mb-1.5">
                           Número Destinatario (con código de país) *
                         </label>
                         <input
@@ -2382,12 +2796,12 @@ export default function App() {
                           value={testWaPhone}
                           onChange={e => setTestWaPhone(e.target.value)}
                           placeholder="Ej: 50371234567 o +503 7123-4567"
-                          className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] rounded-lg text-sm text-zinc-200 outline-none font-mono"
+                          className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] rounded-md text-sm text-zinc-200 outline-none font-mono"
                         />
                       </div>
 
                       <div>
-                        <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1.5">
+                        <label className="block text-xs font-medium text-zinc-300 mb-1.5">
                           Mensaje *
                         </label>
                         <textarea
@@ -2396,7 +2810,7 @@ export default function App() {
                           value={testWaMessage}
                           onChange={e => setTestWaMessage(e.target.value)}
                           placeholder="Escribe el mensaje de prueba..."
-                          className="w-full px-3.5 py-2 bg-[#0e1017] border border-[#1f2330] focus:border-[#3ecf8e] rounded-lg text-sm text-zinc-200 outline-none resize-none"
+                          className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] focus:border-[#3ecf8e] rounded-md text-sm text-zinc-200 outline-none resize-none"
                         ></textarea>
                       </div>
 
@@ -2404,7 +2818,7 @@ export default function App() {
                         type="submit"
                         disabled={isSendingTestWa || (!waStatus.connected && waStatus.status !== 'CONNECTED')}
                         style={{ backgroundColor: themeColor }}
-                        className="w-full flex items-center justify-center gap-2 px-4 py-2.5 text-zinc-950 font-bold text-sm rounded-lg shadow-lg transition-all disabled:opacity-40 hover:brightness-110"
+                        className="w-full flex items-center justify-center gap-2 px-3 py-2 text-zinc-950 font-medium text-[13px] rounded-md transition-all disabled:opacity-40 hover:brightness-110"
                       >
                         {isSendingTestWa ? (
                           <>
@@ -2437,7 +2851,7 @@ export default function App() {
               TAB 5: AJUSTES DE MARCA (SETTINGS)
               ============================================================== */}
           {activeTab === 'settings' && (
-            <div className="space-y-6 animate-fadeIn pb-12">
+            <div className="space-y-6 animate-fadeIn pb-2">
               {/* Ocultos: inputs tipo archivo para subir logo y avatar */}
               <input
                 ref={logoInputRef}
@@ -2454,16 +2868,13 @@ export default function App() {
                 onChange={e => handleImageFileChange(e, 'bot_avatar')}
               />
 
-              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-[#1f2330]">
+              <div className="!mt-0 flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div>
-                  <div className="flex items-center gap-2">
-                    <Sparkles size={20} style={{ color: themeColor }} />
-                    <h1 className="text-xl font-bold text-zinc-100">Ajustes de Marca</h1>
-                  </div>
+                  <h1 className="text-xl font-medium tracking-tight text-zinc-100">Ajustes de Marca</h1>
                   <p className="text-sm text-zinc-400 mt-1">Configura logotipos, colores, identidad corporativa, números de contacto y claves de IA guardados en la Base de Datos.</p>
                 </div>
                 <div
-                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap self-start sm:self-auto border"
+                  className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap self-start sm:self-auto border"
                   style={{
                     backgroundColor: `rgba(${themeRgb}, 0.12)`,
                     borderColor: `rgba(${themeRgb}, 0.25)`,
@@ -2475,14 +2886,39 @@ export default function App() {
                 </div>
               </div>
 
-              <form onSubmit={handleSaveSettings} className="space-y-6">
+              {installedModules.includes('restaurant') && (
+                <div
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-md border"
+                  style={{ backgroundColor: `rgba(${themeRgb}, 0.06)`, borderColor: `rgba(${themeRgb}, 0.25)` }}
+                >
+                  <div className="flex items-start gap-2">
+                    <UtensilsCrossed size={20} style={{ color: themeColor }} className="mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-zinc-100">Módulo Restaurante activo en la IA</p>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        El asistente conoce tu menú, horarios, zonas y pagos, y registra pedidos en el panel. Configura cómo muestra el menú y toma pedidos.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setRestaurantSubTab('settings'); navigateTo('restaurant'); }}
+                    className="px-3 py-1.5 rounded-md text-[13px] font-medium text-black whitespace-nowrap hover:brightness-110"
+                    style={{ backgroundColor: themeColor }}
+                  >
+                    Configurar IA del restaurante
+                  </button>
+                </div>
+              )}
+
+              <form onSubmit={handleSaveSettings} className="space-y-2">
 
                 {/* ==========================================
                     SECCIÓN 1: IDENTIDAD VISUAL & LOGOTIPOS
                     ========================================== */}
-                <div className="p-6 bg-[#151720] border border-[#1f2330] rounded-xl space-y-6">
-                  <div className="flex items-center justify-between pb-3 border-b border-[#1f2330]">
-                    <div className="flex items-center gap-2.5 text-zinc-200 font-bold text-base">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md space-y-2">
+                  <div className="flex items-center justify-between pb-2 border-b border-[#2e2e2e]">
+                    <div className="flex items-center gap-2 text-zinc-200 font-medium text-base">
                       <Palette size={18} style={{ color: themeColor }} />
                       <span>Identidad Visual, Logotipos & Paleta de Color</span>
                     </div>
@@ -2498,16 +2934,16 @@ export default function App() {
                     </span>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
 
                     {/* Logo de la Empresa */}
-                    <div className="p-4 bg-[#0e1017] border border-[#1f2330] rounded-lg flex flex-col justify-between">
+                    <div className="p-4 bg-[#141414] border border-[#2e2e2e] rounded-md flex flex-col justify-between">
                       <div>
-                        <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Logo de la Empresa / Marca</label>
-                        <p className="text-xs text-zinc-500 mb-4">Se muestra en el encabezado de la barra lateral y reportes.</p>
+                        <label className="block text-xs font-medium text-zinc-300 mb-2">Logo de la Empresa / Marca</label>
+                        <p className="text-xs text-zinc-500 mb-2">Se muestra en el encabezado de la barra lateral y reportes.</p>
 
-                        <div className="flex items-center gap-4 mb-4">
-                          <div className="w-20 h-20 rounded-xl bg-zinc-900 border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0 shadow-inner">
+                        <div className="flex items-center gap-2 mb-2">
+                          <div className="w-20 h-20 rounded-md bg-zinc-900 border border-zinc-800 flex items-center justify-center overflow-hidden shrink-0">
                             {settingsForm.company_logo ? (
                               <img src={settingsForm.company_logo} alt="Logo" className="w-full h-full object-contain p-1" />
                             ) : (
@@ -2522,7 +2958,7 @@ export default function App() {
                             <button
                               type="button"
                               onClick={() => logoInputRef.current?.click()}
-                              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg border border-zinc-700 transition-colors"
+                              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[13px] font-medium rounded-md border border-zinc-700 transition-colors"
                             >
                               <Upload size={14} />
                               <span>{settingsForm.company_logo ? 'Cambiar Logo' : 'Subir Archivo'}</span>
@@ -2531,7 +2967,7 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => handleRemoveImage('company_logo')}
-                                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs rounded-lg border border-rose-500/20 transition-colors"
+                                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-[13px] rounded-md border border-rose-500/20 transition-colors"
                               >
                                 <Trash2 size={13} />
                                 <span>Eliminar Logo</span>
@@ -2548,21 +2984,21 @@ export default function App() {
                           value={settingsForm.company_logo?.startsWith('data:') ? '' : settingsForm.company_logo}
                           onChange={e => setSettingsForm(prev => ({ ...prev, company_logo: e.target.value }))}
                           placeholder="https://tuempresa.com/logo.png"
-                          className="w-full px-3 py-1.5 bg-[#151720] border border-[#1f2330] rounded-md text-xs text-zinc-200 outline-none"
+                          className="w-full px-3 py-2 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none"
                         />
                       </div>
                     </div>
 
                     {/* Avatar del Asistente */}
-                    <div className="p-4 bg-[#0e1017] border border-[#1f2330] rounded-lg flex flex-col justify-between">
+                    <div className="p-4 bg-[#141414] border border-[#2e2e2e] rounded-md flex flex-col justify-between">
                       <div>
-                        <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Avatar del Asistente IA</label>
-                        <p className="text-xs text-zinc-500 mb-4">Aparece en cada mensaje del asistente en el chat y WhatsApp.</p>
+                        <label className="block text-xs font-medium text-zinc-300 mb-2">Avatar del Asistente IA</label>
+                        <p className="text-xs text-zinc-500 mb-2">Aparece en cada mensaje del asistente en el chat y WhatsApp.</p>
 
-                        <div className="flex items-center gap-4 mb-4">
+                        <div className="flex items-center gap-2 mb-2">
                           <div
-                            className="w-20 h-20 rounded-full border-2 flex items-center justify-center overflow-hidden shrink-0 shadow-lg"
-                            style={{ borderColor: themeColor, backgroundColor: '#181a24' }}
+                            className="w-20 h-20 rounded-full border-2 flex items-center justify-center overflow-hidden shrink-0"
+                            style={{ borderColor: themeColor, backgroundColor: '#232323' }}
                           >
                             {settingsForm.bot_avatar ? (
                               <img src={settingsForm.bot_avatar} alt="Avatar" className="w-full h-full object-cover" />
@@ -2575,7 +3011,7 @@ export default function App() {
                             <button
                               type="button"
                               onClick={() => avatarInputRef.current?.click()}
-                              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-semibold rounded-lg border border-zinc-700 transition-colors"
+                              className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-[13px] font-medium rounded-md border border-zinc-700 transition-colors"
                             >
                               <Upload size={14} />
                               <span>{settingsForm.bot_avatar ? 'Cambiar Avatar' : 'Subir Archivo'}</span>
@@ -2584,7 +3020,7 @@ export default function App() {
                               <button
                                 type="button"
                                 onClick={() => handleRemoveImage('bot_avatar')}
-                                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-xs rounded-lg border border-rose-500/20 transition-colors"
+                                className="w-full inline-flex items-center justify-center gap-1.5 px-3 py-2 bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 text-[13px] rounded-md border border-rose-500/20 transition-colors"
                               >
                                 <Trash2 size={13} />
                                 <span>Eliminar Avatar</span>
@@ -2601,24 +3037,24 @@ export default function App() {
                           value={settingsForm.bot_avatar?.startsWith('data:') ? '' : settingsForm.bot_avatar}
                           onChange={e => setSettingsForm(prev => ({ ...prev, bot_avatar: e.target.value }))}
                           placeholder="https://tuempresa.com/avatar.png"
-                          className="w-full px-3 py-1.5 bg-[#151720] border border-[#1f2330] rounded-md text-xs text-zinc-200 outline-none"
+                          className="w-full px-3 py-2 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none"
                         />
                       </div>
                     </div>
 
                     {/* Paleta de Color de la Marca */}
-                    <div className="p-4 bg-[#0e1017] border border-[#1f2330] rounded-lg flex flex-col justify-between">
+                    <div className="p-4 bg-[#141414] border border-[#2e2e2e] rounded-md flex flex-col justify-between">
                       <div>
-                        <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Color de Acento de la Marca</label>
-                        <p className="text-xs text-zinc-500 mb-3">Define los acentos visuales, botones, badges e indicadores del sistema.</p>
+                        <label className="block text-xs font-medium text-zinc-300 mb-2">Color de Acento de la Marca</label>
+                        <p className="text-xs text-zinc-500 mb-2">Define los acentos visuales, botones, badges e indicadores del sistema.</p>
 
-                        <div className="grid grid-cols-4 gap-2 mb-4">
+                        <div className="grid grid-cols-4 gap-3 mb-2">
                           {BRAND_COLOR_PRESETS.map(p => (
                             <button
                               key={p.hex}
                               type="button"
                               onClick={() => setSettingsForm(prev => ({ ...prev, primary_color: p.hex }))}
-                              className={`h-8 rounded-lg flex items-center justify-center transition-transform hover:scale-105 border ${settingsForm.primary_color?.toLowerCase() === p.hex.toLowerCase()
+                              className={`h-8 rounded-md flex items-center justify-center transition-transform hover:scale-105 border ${settingsForm.primary_color?.toLowerCase() === p.hex.toLowerCase()
                                   ? 'border-white ring-2 ring-white/40 scale-105'
                                   : 'border-transparent'
                                 }`}
@@ -2626,20 +3062,20 @@ export default function App() {
                               title={p.name}
                             >
                               {settingsForm.primary_color?.toLowerCase() === p.hex.toLowerCase() && (
-                                <CheckCircle2 size={14} className="text-zinc-950 font-bold" />
+                                <CheckCircle2 size={14} className="text-zinc-950 font-medium" />
                               )}
                             </button>
                           ))}
                         </div>
                       </div>
 
-                      <div className="space-y-2 pt-2 border-t border-[#1f2330]">
+                      <div className="space-y-2 pt-2 border-t border-[#2e2e2e]">
                         <div className="flex items-center gap-2">
                           <input
                             type="color"
                             value={settingsForm.primary_color || '#3ecf8e'}
                             onChange={e => setSettingsForm(prev => ({ ...prev, primary_color: e.target.value }))}
-                            className="w-9 h-9 rounded-lg cursor-pointer bg-transparent border-0"
+                            className="w-9 h-9 rounded-md cursor-pointer bg-transparent border-0"
                             title="Seleccionar color personalizado"
                           />
                           <input
@@ -2647,11 +3083,11 @@ export default function App() {
                             value={settingsForm.primary_color || '#3ecf8e'}
                             onChange={e => setSettingsForm(prev => ({ ...prev, primary_color: e.target.value }))}
                             placeholder="#3ecf8e"
-                            className="flex-1 px-3 py-1.5 bg-[#151720] border border-[#1f2330] rounded-md text-xs font-mono text-zinc-200 outline-none"
+                            className="flex-1 px-3 py-2 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-xs font-mono text-zinc-200 outline-none"
                           />
                         </div>
                         <div
-                          className="px-3 py-1.5 rounded-md text-xs font-semibold flex items-center justify-between text-zinc-950"
+                          className="px-2.5 py-1.5 rounded-md text-xs font-semibold flex items-center justify-between text-zinc-950"
                           style={{ backgroundColor: themeColor }}
                         >
                           <span>Vista Previa de Botón</span>
@@ -2666,42 +3102,42 @@ export default function App() {
                 {/* ==========================================
                     SECCIÓN 2: IDENTIDAD CORPORATIVA & CONTACTO
                     ========================================== */}
-                <div className="p-6 bg-[#151720] border border-[#1f2330] rounded-xl space-y-4">
-                  <div className="flex items-center gap-2.5 text-zinc-200 font-bold text-base pb-2 border-b border-[#1f2330]">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md space-y-2">
+                  <div className="flex items-center gap-2 text-zinc-200 font-medium text-base pb-2 border-b border-[#2e2e2e]">
                     <Building size={18} style={{ color: themeColor }} />
                     <span>Identidad Corporativa & Canales de Contacto</span>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Nombre de la Empresa o Marca *</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Nombre de la Empresa o Marca *</label>
                       <input
                         type="text"
                         required
                         value={settingsForm.company_name}
                         onChange={e => setSettingsForm(prev => ({ ...prev, company_name: e.target.value }))}
                         placeholder="Ej: Fantasma Digital / Zenith Studio"
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none focus:border-zinc-500"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none focus:border-zinc-500"
                       />
                       <span className="text-[11px] text-zinc-500 mt-1 block">Aparece en los saludos del bot, encabezados y firma.</span>
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Nombre del Asistente IA *</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Nombre del Asistente IA *</label>
                       <input
                         type="text"
                         required
                         value={settingsForm.bot_name}
                         onChange={e => setSettingsForm(prev => ({ ...prev, bot_name: e.target.value }))}
                         placeholder="Ej: Asistente Operativo / GhostBot"
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none focus:border-zinc-500"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none focus:border-zinc-500"
                       />
                       <span className="text-[11px] text-zinc-500 mt-1 block">Nombre con el que el bot se presenta a los usuarios.</span>
                     </div>
 
                     <div className="space-y-2">
                       <div className="flex items-center justify-between">
-                        <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider">
+                        <label className="block text-xs font-medium text-zinc-300">
                           Teléfono / WhatsApp de Soporte Humano
                         </label>
                       </div>
@@ -2712,7 +3148,7 @@ export default function App() {
                           value={settingsForm.support_phone}
                           onChange={e => setSettingsForm(prev => ({ ...prev, support_phone: e.target.value }))}
                           placeholder={settingsForm.detected_whatsapp_phone ? `Automático (${settingsForm.detected_whatsapp_phone})` : 'Dejar vacío para usar el mismo WhatsApp conectado'}
-                          className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none focus:border-zinc-500 font-mono"
+                          className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none focus:border-zinc-500 font-mono"
                         />
                       </div>
 
@@ -2733,7 +3169,7 @@ export default function App() {
                                 setSettingsForm(prev => ({ ...prev, support_phone: prev.detected_whatsapp_phone }));
                                 showToast(`Asignado número de WhatsApp: ${settingsForm.detected_whatsapp_phone}`);
                               }}
-                              className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded text-[11px] transition-colors border border-zinc-700"
+                              className="px-2 py-1 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-md text-[11px] transition-colors border border-zinc-700"
                             >
                               Copiar conectado ({settingsForm.detected_whatsapp_phone})
                             </button>
@@ -2745,7 +3181,7 @@ export default function App() {
                                 setSettingsForm(prev => ({ ...prev, support_phone: '' }));
                                 showToast('Restablecido a automático (mismo número conectado)');
                               }}
-                              className="px-2 py-1 bg-emerald-950/60 hover:bg-emerald-900/60 text-[#3ecf8e] rounded text-[11px] transition-colors border border-emerald-800/50"
+                              className="px-2 py-1 bg-emerald-950/60 hover:bg-emerald-900/60 text-[#3ecf8e] rounded-md text-[11px] transition-colors border border-emerald-800/50"
                             >
                               Dejar en Automático
                             </button>
@@ -2758,37 +3194,37 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Sitio Web Oficial / Tienda</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Sitio Web Oficial / Tienda</label>
                       <input
                         type="url"
                         value={settingsForm.website_url}
                         onChange={e => setSettingsForm(prev => ({ ...prev, website_url: e.target.value }))}
                         placeholder="https://tuempresa.com"
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none focus:border-zinc-500"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none focus:border-zinc-500"
                       />
                       <span className="text-[11px] text-zinc-500 mt-1 block">URL oficial referenciada por el bot en cotizaciones y consultas.</span>
                     </div>
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Tono y Personalidad</label>
+                    <label className="block text-xs font-medium text-zinc-300 mb-2">Tono y Personalidad</label>
                     <textarea
                       rows={2}
                       value={settingsForm.bot_tone}
                       onChange={e => setSettingsForm(prev => ({ ...prev, bot_tone: e.target.value }))}
                       placeholder="Ej: Profesional, cálido, resolutivo y empático. Adaptado al español de El Salvador."
-                      className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
+                      className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
                     />
                   </div>
 
                   <div>
-                    <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Directrices Especiales & Reglas de la Marca</label>
+                    <label className="block text-xs font-medium text-zinc-300 mb-2">Directrices Especiales & Reglas de la Marca</label>
                     <textarea
                       rows={3}
                       value={settingsForm.brand_instructions}
                       onChange={e => setSettingsForm(prev => ({ ...prev, brand_instructions: e.target.value }))}
                       placeholder="Ej: Resaltar nuestra garantía de 12 meses. Si preguntan por proyectos a medida, solicitar su WhatsApp o correo para seguimiento..."
-                      className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
+                      className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
                     />
                     <span className="text-[11px] text-zinc-500 mt-1 block">Inyectado en tiempo real en las directrices del System Prompt de IA.</span>
                   </div>
@@ -2797,9 +3233,9 @@ export default function App() {
                 {/* ==========================================
                     SECCIÓN 3: CONTROL DE AGENTES HUMANOS & HANDOFF (INACTIVIDAD)
                     ========================================== */}
-                <div className="p-6 bg-[#151720] border border-[#1f2330] rounded-xl space-y-6">
-                  <div className="flex items-center justify-between pb-3 border-b border-[#1f2330]">
-                    <div className="flex items-center gap-2.5 text-zinc-200 font-bold text-base">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md space-y-2">
+                  <div className="flex items-center justify-between pb-2 border-b border-[#2e2e2e]">
+                    <div className="flex items-center gap-2 text-zinc-200 font-medium text-base">
                       <UserCheck size={18} style={{ color: themeColor }} />
                       <span>Agentes Humanos & Silencio de IA (Human Handoff)</span>
                     </div>
@@ -2816,10 +3252,10 @@ export default function App() {
                     </span>
                   </div>
 
-                  <div className="p-4 bg-[#0e1017] border border-[#1f2330] rounded-lg space-y-3">
-                    <div className="flex items-start gap-3">
+                  <div className="p-4 bg-[#141414] border border-[#2e2e2e] rounded-md space-y-2">
+                    <div className="flex items-start gap-2">
                       <div
-                        className="p-2 rounded-lg shrink-0 mt-0.5"
+                        className="p-2 rounded-md shrink-0 mt-0.5"
                         style={{
                           backgroundColor: `rgba(${themeRgb}, 0.15)`,
                           color: themeColor
@@ -2840,11 +3276,11 @@ export default function App() {
                       </div>
                     </div>
 
-                    <div className="pt-3 border-t border-[#1f2330]">
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">
+                    <div className="pt-2 border-t border-[#2e2e2e]">
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">
                         Tiempo de Inactividad para Reactivar la IA (en Horas)
                       </label>
-                      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+                      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
                         <div className="flex items-center gap-2 max-w-xs">
                           <input
                             type="number"
@@ -2853,7 +3289,7 @@ export default function App() {
                             step="0.5"
                             value={settingsForm.handoff_inactivity_hours ?? 6.0}
                             onChange={e => setSettingsForm(prev => ({ ...prev, handoff_inactivity_hours: parseFloat(e.target.value) || 6.0 }))}
-                            className="w-28 px-3.5 py-2 bg-[#151720] border border-[#1f2330] rounded-lg text-sm text-zinc-100 font-mono outline-none focus:border-zinc-500"
+                            className="w-28 px-3 py-2 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-sm text-zinc-100 font-mono outline-none focus:border-zinc-500"
                           />
                           <span className="text-xs text-zinc-400 font-medium">horas sin mensajes</span>
                         </div>
@@ -2869,9 +3305,9 @@ export default function App() {
                                 setSettingsForm(prev => ({ ...prev, handoff_inactivity_hours: h }));
                                 showToast(`Configurado en ${h} horas de inactividad`);
                               }}
-                              className={`px-2.5 py-1 rounded text-xs font-medium transition-colors border ${
+                              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors border ${
                                 Number(settingsForm.handoff_inactivity_hours) === h
-                                  ? 'text-zinc-950 font-bold shadow-sm'
+                                  ? 'text-zinc-950 font-medium shadow-sm'
                                   : 'bg-zinc-850 hover:bg-zinc-800 text-zinc-300 border-zinc-750'
                               }`}
                               style={Number(settingsForm.handoff_inactivity_hours) === h ? {
@@ -2886,7 +3322,7 @@ export default function App() {
                       </div>
 
                       {activeHandoffs.length > 0 && (
-                        <div className="mt-3 p-3 rounded-lg bg-amber-500/10 border border-amber-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                        <div className="mt-2 p-2 rounded-md bg-amber-500/10 border border-amber-500/25 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                           <div className="flex items-center gap-2 text-xs text-amber-300">
                             <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse shrink-0"></span>
                             <span>Hay <strong>{activeHandoffs.length}</strong> usuario(s) con la IA pausada actualmente en atención humana.</span>
@@ -2894,7 +3330,7 @@ export default function App() {
                           <button
                             type="button"
                             onClick={() => navigateTo('handoffs')}
-                            className="text-xs font-bold text-amber-400 hover:text-amber-300 underline underline-offset-2 flex items-center gap-1 shrink-0"
+                            className="text-xs font-medium text-amber-400 hover:text-amber-300 underline underline-offset-2 flex items-center gap-1 shrink-0"
                           >
                             <span>Ver y Despausar en el Panel</span>
                             <ExternalLink size={12} />
@@ -2908,33 +3344,38 @@ export default function App() {
                 {/* ==========================================
                     SECCIÓN 4: MENSAJES AUTOMATIZADOS
                     ========================================== */}
-                <div className="p-6 bg-[#151720] border border-[#1f2330] rounded-xl space-y-4">
-                  <div className="flex items-center gap-2.5 text-zinc-200 font-bold text-base pb-2 border-b border-[#1f2330]">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md space-y-2">
+                  <div className="flex items-center gap-2 text-zinc-200 font-medium text-base pb-2 border-b border-[#2e2e2e]">
                     <MessageCircle size={18} style={{ color: themeColor }} />
                     <span>Mensajes Automatizados del Asistente</span>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Mensaje de Bienvenida (Saludo Inicial)</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Mensaje de Bienvenida (Saludo Inicial)</label>
                       <textarea
                         rows={3}
                         value={settingsForm.welcome_message}
                         onChange={e => setSettingsForm(prev => ({ ...prev, welcome_message: e.target.value }))}
                         placeholder="Ej: ¡Hola! Bienvenido a Fantasma Digital. Soy tu Asistente Operativo. ¿En qué te puedo asesorar hoy?"
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
                       />
-                      <span className="text-[11px] text-zinc-500 mt-1 block">Mensaje inicial en el Playground y para nuevos chats en WhatsApp.</span>
+                      <span className="text-[11px] text-zinc-500 mt-1 block">Saludo predeterminado del asistente para cualquier tipo de negocio (Playground y nuevos chats de WhatsApp).</span>
+                      {stats?.welcome_source && stats.welcome_source !== 'profile' && (
+                        <span className="text-[11px] mt-1.5 block px-2 py-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300">
+                          ⚠️ Ahora mismo se usa el saludo del módulo «{stats.welcome_source_name}», que reemplaza a este. Si lo dejas vacío allá, se usará este.
+                        </span>
+                      )}
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Mensaje de Transferencia a Humano</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Mensaje de Transferencia a Humano</label>
                       <textarea
                         rows={3}
                         value={settingsForm.transfer_message}
                         onChange={e => setSettingsForm(prev => ({ ...prev, transfer_message: e.target.value }))}
                         placeholder="Ej: He notificado a nuestro equipo humano. En unos momentos uno de nuestros especialistas continuará tu atención por este chat."
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
                       />
                       <span className="text-[11px] text-zinc-500 mt-1 block">Respuesta automática cuando el cliente solicita un agente humano.</span>
                     </div>
@@ -2944,19 +3385,19 @@ export default function App() {
                 {/* ==========================================
                     SECCIÓN 4: MOTORES DE IA, CLAVES & RED
                     ========================================== */}
-                <div className="p-6 bg-[#151720] border border-[#1f2330] rounded-xl space-y-4">
-                  <div className="flex items-center gap-2.5 text-zinc-200 font-bold text-base pb-2 border-b border-[#1f2330]">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md space-y-2">
+                  <div className="flex items-center gap-2 text-zinc-200 font-medium text-base pb-2 border-b border-[#2e2e2e]">
                     <Key size={18} style={{ color: themeColor }} />
                     <span>Motores de IA, Claves API & Red</span>
                   </div>
 
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Proveedor Principal de IA</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Proveedor Principal de IA</label>
                       <select
                         value={settingsForm.ai_provider}
                         onChange={e => setSettingsForm(prev => ({ ...prev, ai_provider: e.target.value }))}
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none focus:border-zinc-500"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none focus:border-zinc-500"
                       >
                         {!settingsForm.ai_provider && <option value="">-- Seleccionar Proveedor --</option>}
                         <option value="gemini">Google Gemini (Recomendado - Ultra Rápido)</option>
@@ -2966,11 +3407,11 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Modelo de Google Gemini</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Modelo de Google Gemini</label>
                       <select
                         value={settingsForm.gemini_model}
                         onChange={e => setSettingsForm(prev => ({ ...prev, gemini_model: e.target.value }))}
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none focus:border-zinc-500"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none focus:border-zinc-500"
                       >
                         {!settingsForm.gemini_model && <option value="">-- Seleccionar Modelo Gemini --</option>}
                         <option value="gemini-2.5-flash">gemini-2.5-flash (Última generación - Máxima velocidad)</option>
@@ -2980,14 +3421,14 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Google Gemini API Key</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Google Gemini API Key</label>
                       <div className="relative">
                         <input
                           type={showGeminiKey ? 'text' : 'password'}
                           value={settingsForm.gemini_api_key}
                           onChange={e => setSettingsForm(prev => ({ ...prev, gemini_api_key: e.target.value }))}
                           placeholder="AIzaSy..."
-                          className="w-full pl-3.5 pr-10 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none font-mono focus:border-zinc-500"
+                          className="w-full pl-3 pr-10 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none font-mono focus:border-zinc-500"
                         />
                         <button
                           type="button"
@@ -3001,14 +3442,14 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">OpenAI API Key (Respaldo)</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">OpenAI API Key (Respaldo)</label>
                       <div className="relative">
                         <input
                           type={showOpenaiKey ? 'text' : 'password'}
                           value={settingsForm.openai_api_key}
                           onChange={e => setSettingsForm(prev => ({ ...prev, openai_api_key: e.target.value }))}
                           placeholder="sk-proj-..."
-                          className="w-full pl-3.5 pr-10 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none font-mono focus:border-zinc-500"
+                          className="w-full pl-3 pr-10 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none font-mono focus:border-zinc-500"
                         />
                         <button
                           type="button"
@@ -3022,11 +3463,11 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">Modelo de OpenAI</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Modelo de OpenAI</label>
                       <select
                         value={settingsForm.openai_model}
                         onChange={e => setSettingsForm(prev => ({ ...prev, openai_model: e.target.value }))}
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none focus:border-zinc-500"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none focus:border-zinc-500"
                       >
                         {!settingsForm.openai_model && <option value="">-- Seleccionar Modelo OpenAI --</option>}
                         <option value="gpt-4o-mini">gpt-4o-mini (Rápido y económico)</option>
@@ -3035,13 +3476,13 @@ export default function App() {
                     </div>
 
                     <div>
-                      <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">WhatsApp Gateway URL (Microservicio)</label>
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">WhatsApp Gateway URL (Microservicio)</label>
                       <input
                         type="text"
                         value={settingsForm.whatsapp_gateway_url}
                         onChange={e => setSettingsForm(prev => ({ ...prev, whatsapp_gateway_url: e.target.value }))}
                         placeholder="http://localhost:3000 o http://whatsapp-gateway:3000"
-                        className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-200 outline-none font-mono focus:border-zinc-500"
+                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none font-mono focus:border-zinc-500"
                       />
                       <span className="text-[11px] text-zinc-500 mt-1 block">Dirección interna del microservicio Baileys.</span>
                     </div>
@@ -3054,7 +3495,7 @@ export default function App() {
                     type="submit"
                     disabled={isSavingSettings}
                     style={{ backgroundColor: themeColor }}
-                    className="inline-flex items-center gap-2 px-7 py-3 text-zinc-950 font-bold text-sm rounded-lg shadow-xl transition-all disabled:opacity-50 hover:brightness-110 hover:shadow-2xl"
+                    className="inline-flex items-center gap-2 px-3 py-1.5 text-zinc-950 font-medium text-[13px] rounded-md transition-all disabled:opacity-50 hover:brightness-110 hover:"
                   >
                     {isSavingSettings ? (
                       <>
@@ -3077,28 +3518,19 @@ export default function App() {
               SECCIÓN: GESTIÓN DE ATENCIÓN HUMANA & USUARIOS CON IA PAUSADA
               ============================================================== */}
           {activeTab === 'handoffs' && (
-            <div className="max-w-6xl mx-auto space-y-6">
-              {/* Header con gradiente y contexto */}
-              <div className="p-6 bg-[#151720] border border-[#1f2330] rounded-xl flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <div className="space-y-6 animate-fadeIn">
+              <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div>
-                  <div className="flex items-center gap-3 mb-1.5">
-                    <div
-                      className="w-9 h-9 rounded-lg flex items-center justify-center shadow-lg"
-                      style={{ backgroundColor: `rgba(${themeRgb}, 0.15)`, color: themeColor }}
-                    >
-                      <UserCheck size={20} />
-                    </div>
-                    <h2 className="text-xl font-bold text-zinc-100">Usuarios con IA Pausada (Atención Humana)</h2>
-                  </div>
-                  <p className="text-xs text-zinc-400 max-w-2xl leading-relaxed">
-                    Conversaciones derivadas a asesores humanos. La IA permanece en silencio para respetar la atención personalizada. Puedes despausar individualmente a cada cliente o en lote para que la IA retome el control de inmediato.
+                  <h1 className="text-xl font-medium tracking-tight text-zinc-100">Usuarios con IA pausada</h1>
+                  <p className="text-sm text-zinc-400 mt-1 max-w-2xl">
+                    Chats atendidos por un asesor. La IA no responde hasta que la reactives.
                   </p>
                 </div>
 
-                <div className="flex flex-wrap items-center gap-2.5">
+                <div className="flex flex-wrap items-center gap-2">
                   <button
                     onClick={fetchActiveHandoffs}
-                    className="inline-flex items-center gap-2 px-3.5 py-2 bg-[#0c0d12] hover:bg-zinc-800 border border-[#1f2330] rounded-lg text-xs font-medium text-zinc-300 transition-colors"
+                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#121212] hover:bg-zinc-800 border border-[#2e2e2e] rounded-md text-[13px] font-medium text-zinc-300 transition-colors"
                   >
                     <RefreshCw size={14} className={isSyncing ? "animate-spin" : ""} />
                     <span>Actualizar</span>
@@ -3106,7 +3538,7 @@ export default function App() {
 
                   <button
                     onClick={() => setShowManualPauseModal(true)}
-                    className="inline-flex items-center gap-2 px-3.5 py-2 bg-[#0c0d12] hover:bg-zinc-800 border border-amber-500/30 text-amber-300 hover:text-amber-200 rounded-lg text-xs font-semibold transition-colors"
+                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-[#121212] hover:bg-zinc-800 border border-amber-500/30 text-amber-300 hover:text-amber-200 rounded-md text-[13px] font-medium transition-colors"
                   >
                     <Pause size={14} />
                     <span>+ Pausar IA a un Número</span>
@@ -3116,7 +3548,7 @@ export default function App() {
                     onClick={handleReleaseAllHandoffs}
                     disabled={activeHandoffs.length === 0 || isReleasingAll}
                     style={activeHandoffs.length > 0 ? { backgroundColor: themeColor } : {}}
-                    className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-800 text-zinc-950 font-bold text-xs rounded-lg transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110 shadow-md"
+                    className="inline-flex items-center gap-2 px-3 py-1.5 bg-zinc-800 text-zinc-950 font-medium text-[13px] rounded-md transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:brightness-110"
                   >
                     {isReleasingAll ? (
                       <>
@@ -3134,40 +3566,40 @@ export default function App() {
               </div>
 
               {/* Métricas Rápidas */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <div className="p-4 bg-[#151720] border border-[#1f2330] rounded-xl flex items-center justify-between">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md flex items-center justify-between">
                   <div>
-                    <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">IA Pausada Activa</span>
-                    <span className="text-2xl font-black text-amber-400 font-mono">{activeHandoffs.length}</span>
+                    <span className="text-[11px] font-medium text-zinc-500 block mb-1">IA Pausada Activa</span>
+                    <span className="text-2xl font-semibold text-amber-400 font-mono">{activeHandoffs.length}</span>
                     <span className="text-[11px] text-zinc-500 block mt-0.5">clientes en manos de asesor</span>
                   </div>
-                  <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
+                  <div className="w-10 h-10 rounded-md bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
                     <UserX size={20} />
                   </div>
                 </div>
 
-                <div className="p-4 bg-[#151720] border border-[#1f2330] rounded-xl flex items-center justify-between">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md flex items-center justify-between">
                   <div>
-                    <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">Ventana de Inactividad</span>
-                    <span className="text-2xl font-black text-zinc-100 font-mono">{stats.handoff_inactivity_hours ?? 6.0}h</span>
+                    <span className="text-[11px] font-medium text-zinc-500 block mb-1">Ventana de Inactividad</span>
+                    <span className="text-2xl font-semibold text-zinc-100 font-mono">{stats.handoff_inactivity_hours ?? 6.0}h</span>
                     <span className="text-[11px] text-zinc-500 block mt-0.5">reactivación autónoma</span>
                   </div>
-                  <div className="w-10 h-10 rounded-xl bg-zinc-800/80 border border-[#1f2330] flex items-center justify-center text-zinc-400">
+                  <div className="w-10 h-10 rounded-md bg-zinc-800/80 border border-[#2e2e2e] flex items-center justify-center text-zinc-400">
                     <Clock size={20} />
                   </div>
                 </div>
 
-                <div className="p-4 bg-[#151720] border border-[#1f2330] rounded-xl flex items-center justify-between">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md flex items-center justify-between">
                   <div>
-                    <span className="text-[11px] font-bold text-zinc-500 uppercase tracking-wider block mb-1">Canal WhatsApp</span>
-                    <span className="text-base font-bold text-zinc-200 block truncate">
+                    <span className="text-[11px] font-medium text-zinc-500 block mb-1">Canal WhatsApp</span>
+                    <span className="text-base font-medium text-zinc-200 block truncate">
                       {stats.wa_connected || stats.gateway_state === 'CONNECTED' ? 'En Línea & Conectado' : 'Desconectado'}
                     </span>
                     <span className="text-[11px] text-zinc-500 block mt-0.5">
                       {stats.effective_support_phone || 'Línea de soporte'}
                     </span>
                   </div>
-                  <div className={`w-10 h-10 rounded-xl flex items-center justify-center ${
+                  <div className={`w-10 h-10 rounded-md flex items-center justify-center ${
                     stats.wa_connected || stats.gateway_state === 'CONNECTED'
                       ? 'bg-emerald-500/15 text-emerald-400 border border-emerald-500/30'
                       : 'bg-zinc-850 text-zinc-500 border border-zinc-750'
@@ -3178,7 +3610,7 @@ export default function App() {
               </div>
 
               {/* Filtro / Buscador */}
-              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+              <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2">
                 <div className="relative flex-1 max-w-md">
                   <Search size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" />
                   <input
@@ -3186,7 +3618,7 @@ export default function App() {
                     value={handoffSearch}
                     onChange={e => setHandoffSearch(e.target.value)}
                     placeholder="Buscar por teléfono, sesión o motivo..."
-                    className="w-full pl-10 pr-4 py-2 bg-[#151720] border border-[#1f2330] rounded-lg text-xs text-zinc-200 outline-none focus:border-zinc-500 font-sans"
+                    className="w-full pl-10 pr-3 py-2 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none focus:border-zinc-500 font-sans"
                   />
                   {handoffSearch && (
                     <button onClick={() => setHandoffSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white">
@@ -3202,30 +3634,30 @@ export default function App() {
 
               {/* Lista de Usuarios Pausados */}
               {activeHandoffs.length === 0 ? (
-                <div className="p-12 bg-[#151720] border border-[#1f2330] rounded-xl text-center space-y-4 shadow-sm">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-center space-y-2 shadow-sm">
                   <div
-                    className="w-16 h-16 rounded-2xl mx-auto flex items-center justify-center shadow-lg border border-[#1f2330]"
+                    className="w-16 h-16 rounded-md mx-auto flex items-center justify-center border border-[#2e2e2e]"
                     style={{ backgroundColor: `rgba(${themeRgb}, 0.1)`, color: themeColor }}
                   >
                     <CheckCircle2 size={32} />
                   </div>
                   <div className="max-w-md mx-auto">
-                    <h3 className="text-base font-bold text-zinc-100">Ningún usuario tiene la IA pausada</h3>
+                    <h3 className="text-base font-medium text-zinc-100">Ningún usuario tiene la IA pausada</h3>
                     <p className="text-xs text-zinc-400 mt-1.5 leading-relaxed">
                       Todas las conversaciones están siendo atendidas de forma 100% automatizada por la IA. En cuanto un cliente solicite un asesor humano o intervengas, aparecerá listado aquí en tiempo real para que puedas despausarlo con un solo clic.
                     </p>
                   </div>
-                  <div className="pt-2 flex justify-center gap-3">
+                  <div className="pt-2 flex justify-center gap-2">
                     <button
                       onClick={() => setShowManualPauseModal(true)}
-                      className="px-4 py-2 rounded-lg bg-[#0c0d12] border border-[#1f2330] hover:bg-zinc-800 text-xs font-semibold text-zinc-300 transition-colors"
+                      className="px-3 py-1.5 rounded-md bg-[#121212] border border-[#2e2e2e] hover:bg-zinc-800 text-[13px] font-medium text-zinc-300 transition-colors"
                     >
                       + Pausar IA a un número de prueba
                     </button>
                     <button
                       onClick={() => navigateTo('chat')}
                       style={{ color: themeColor }}
-                      className="px-4 py-2 rounded-lg bg-[#0c0d12] border border-[#1f2330] hover:bg-zinc-800 text-xs font-semibold transition-colors flex items-center gap-1.5"
+                      className="px-3 py-1.5 rounded-md bg-[#121212] border border-[#2e2e2e] hover:bg-zinc-800 text-[13px] font-medium transition-colors flex items-center gap-1.5"
                     >
                       <span>Ir al Simulador de Chat</span>
                       <ExternalLink size={13} />
@@ -3233,7 +3665,7 @@ export default function App() {
                   </div>
                 </div>
               ) : filteredHandoffs.length === 0 ? (
-                <div className="p-8 bg-[#151720] border border-[#1f2330] rounded-xl text-center text-zinc-400 text-xs">
+                <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-center text-zinc-400 text-xs">
                   No se encontraron usuarios pausados que coincidan con "{handoffSearch}".
                 </div>
               ) : (
@@ -3248,18 +3680,18 @@ export default function App() {
                     return (
                       <div
                         key={sid}
-                        className="p-4 bg-[#151720] border border-[#1f2330] hover:border-zinc-700/60 rounded-xl transition-all flex flex-col justify-between gap-4 group"
+                        className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] hover:border-zinc-700/60 rounded-md transition-all flex flex-col justify-between gap-2 group"
                       >
-                        <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
-                          <div className="flex items-start gap-3.5 min-w-0 flex-1">
-                            <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
+                        <div className="flex flex-col md:flex-row md:items-start justify-between gap-2">
+                          <div className="flex items-start gap-2 min-w-0 flex-1">
+                            <div className="w-10 h-10 rounded-md bg-amber-500/10 border border-amber-500/30 flex items-center justify-center text-amber-400 shrink-0 mt-0.5">
                               <Pause size={18} />
                             </div>
 
                             <div className="min-w-0 space-y-1.5 flex-1">
                               {/* Teléfono, Badges de Pausa y Tag Directo */}
                               <div className="flex flex-wrap items-center gap-2">
-                                <span className="font-mono font-bold text-sm text-zinc-100 flex items-center gap-1.5">
+                                <span className="font-mono font-medium text-sm text-zinc-100 flex items-center gap-1.5">
                                   {isWhatsAppLid ? sid : (cleanPhone.startsWith('+') ? cleanPhone : `+${cleanPhone}`)}
                                 </span>
                                 <button
@@ -3267,21 +3699,21 @@ export default function App() {
                                     navigator.clipboard.writeText(cleanPhone);
                                     showToast('Número copiado al portapapeles');
                                   }}
-                                  className="text-zinc-500 hover:text-zinc-300 p-0.5 rounded transition-colors"
+                                  className="text-zinc-500 hover:text-zinc-300 p-0.5 rounded-md transition-colors"
                                   title="Copiar identificador"
                                 >
                                   <Copy size={13} />
                                 </button>
-                                <span className="text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                                <span className="text-[10px] uppercase font-medium tracking-wider px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-300 border border-amber-500/30">
                                   ⏸️ IA Pausada
                                 </span>
-                                <span className={`text-[10px] uppercase font-bold tracking-wider px-2 py-0.5 rounded-full border ${getTagBadgeStyle(currentTag)}`}>
+                                <span className={`text-[10px] uppercase font-medium tracking-wider px-2 py-0.5 rounded-full border ${getTagBadgeStyle(currentTag)}`}>
                                   🏷️ {currentTag}
                                 </span>
                               </div>
 
                               {/* Metadatos: Motivo y Horas Restantes */}
-                              <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-zinc-400">
+                              <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-400">
                                 <span className="text-zinc-300">
                                   <strong className="text-zinc-500">Motivo:</strong> {handoff.reason || 'Derivado a agente humano'}
                                 </span>
@@ -3298,9 +3730,9 @@ export default function App() {
 
                               {/* NOTA PARA EL ASESOR (Lo que el cliente busca) */}
                               {handoff.notes ? (
-                                <div className="mt-2.5 p-3 rounded-lg bg-[#0c0d12] border border-amber-500/20 text-xs text-zinc-200">
+                                <div className="mt-2 p-2 rounded-md bg-[#121212] border border-amber-500/20 text-xs text-zinc-200">
                                   <div className="flex items-center justify-between gap-2 mb-1">
-                                    <span className="text-[10px] font-bold text-amber-400 uppercase tracking-wider flex items-center gap-1.5">
+                                    <span className="text-[10px] font-medium text-amber-400 flex items-center gap-1.5">
                                       <FileText size={12} />
                                       <span>Nota para el Asesor (Lo que el cliente busca):</span>
                                     </span>
@@ -3345,7 +3777,7 @@ export default function App() {
                                 setEditTag(handoff.tag || 'ATENCIÓN HUMANA');
                                 setEditNotes(handoff.notes || '');
                               }}
-                              className="px-3 py-1.5 bg-[#0c0d12] hover:bg-zinc-800 border border-[#1f2330] rounded-lg text-xs text-zinc-300 hover:text-white transition-colors flex items-center gap-1.5"
+                              className="px-3 py-1.5 bg-[#121212] hover:bg-zinc-800 border border-[#2e2e2e] rounded-md text-[13px] text-zinc-300 hover:text-white transition-colors flex items-center gap-1.5"
                               title="Editar etiqueta y nota del asesor"
                             >
                               <Tag size={13} className="text-amber-400" />
@@ -3357,7 +3789,7 @@ export default function App() {
                                 navigateTo('chat');
                                 showToast(`Sesión ${sid} lista en el simulador`);
                               }}
-                              className="px-3 py-1.5 bg-[#0c0d12] hover:bg-zinc-800 border border-[#1f2330] rounded-lg text-xs text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5"
+                              className="px-3 py-1.5 bg-[#121212] hover:bg-zinc-800 border border-[#2e2e2e] rounded-md text-[13px] text-zinc-400 hover:text-zinc-200 transition-colors flex items-center gap-1.5"
                               title="Probar en simulador de chat"
                             >
                               <MessageSquare size={13} />
@@ -3368,7 +3800,7 @@ export default function App() {
                               onClick={() => handleReleaseHandoff(sid)}
                               disabled={isReleasing}
                               style={{ backgroundColor: themeColor }}
-                              className="inline-flex items-center gap-2 px-4 py-2 text-zinc-950 font-bold text-xs rounded-lg transition-all hover:brightness-110 shadow-md disabled:opacity-50"
+                              className="inline-flex items-center gap-2 px-3 py-1.5 text-zinc-950 font-medium text-[13px] rounded-md transition-all hover:brightness-110 disabled:opacity-50"
                             >
                               {isReleasing ? (
                                 <>
@@ -3391,16 +3823,95 @@ export default function App() {
               )}
             </div>
           )}
+            {/* ==============================================================
+                TAB: GESTOR DE MÓDULOS (ECOSISTEMA TIPO ODOO)
+                ============================================================== */}
+            {activeTab === 'modules' && (
+              <ModulesPanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                themeRgb={themeRgb}
+                installedModules={installedModules}
+                onModulesChange={fetchInstalledModules}
+                navigateTo={navigateTo}
+                showToast={showToast}
+              />
+            )}
 
+            {/* ==============================================================
+                TAB: RESTAURANTE & PEDIDOS (MÓDULO OFICIAL - SOLO SI ESTÁ INSTALADO)
+                ============================================================== */}
+            {activeTab === 'restaurant' && installedModules.includes('restaurant') && restaurantSubTab === 'guide' && (
+              <ModuleGuide manifest={moduleManifests.restaurant} themeColor={themeColor} onOpenSection={setRestaurantSubTab} />
+            )}
+            {activeTab === 'restaurant' && installedModules.includes('restaurant') && restaurantSubTab !== 'guide' && (
+              <RestaurantPanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                themeRgb={themeRgb}
+                showToast={showToast}
+                initialSubTab={restaurantSubTab}
+                onSubTabChange={setRestaurantSubTab}
+              />
+            )}
+            {/* TAB: CAJA & FINANZAS (MÓDULO OFICIAL - SOLO SI ESTÁ INSTALADO) */}
+            {activeTab === 'agent' && (
+              <AgentPanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                showToast={showToast}
+                subTab={agentSubTab}
+                onChanged={fetchPendingApprovals}
+                onOpenCustomer={(id) => { setCustomerId(String(id)); navigateTo('customers'); }}
+              />
+            )}
+            {activeTab === 'inbox' && (
+              <InboxPanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                showToast={showToast}
+                conversationId={inboxId}
+                onSelect={(id) => setInboxId(String(id))}
+                onOpenCustomer={(id) => { setCustomerId(String(id)); navigateTo('customers'); }}
+              />
+            )}
+            {activeTab === 'customers' && (
+              <CustomersPanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                showToast={showToast}
+                customerId={customerId}
+                onOpen={(id) => setCustomerId(id ? String(id) : null)}
+              />
+            )}
+            {activeTab === 'finance' && installedModules.includes('finance') && financeSubTab === 'guide' && (
+              <ModuleGuide manifest={moduleManifests.finance} themeColor={themeColor} onOpenSection={setFinanceSubTab} />
+            )}
+            {activeTab === 'finance' && installedModules.includes('finance') && financeSubTab !== 'guide' && (
+              <FinancePanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                themeRgb={themeRgb}
+                showToast={showToast}
+                subTab={financeSubTab}
+                setSubTab={setFinanceSubTab}
+              />
+            )}
         </main>
       </div>
 
       {/* Modal para pausar manualmente a un usuario */}
       {showManualPauseModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#151720] border border-[#1f2330] rounded-xl max-w-md w-full shadow-2xl animate-scaleUp">
-            <div className="p-4 border-b border-[#1f2330] flex items-center justify-between">
-              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2">
+          <div className="bg-[#1c1c1c] border border-[#2e2e2e] rounded-md max-w-md w-full animate-scaleUp">
+            <div className="p-2 border-b border-[#2e2e2e] flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-400 font-medium text-sm">
                 <Pause size={16} />
                 <span>Pausar IA Manualmente para un Usuario</span>
               </div>
@@ -3411,9 +3922,9 @@ export default function App() {
                 <X size={16} />
               </button>
             </div>
-            <form onSubmit={handlePauseHandoffManual} className="p-5 space-y-4">
+            <form onSubmit={handlePauseHandoffManual} className="p-2 space-y-2">
               <div>
-                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
                   Número de Teléfono o ID de Sesión
                 </label>
                 <input
@@ -3422,13 +3933,13 @@ export default function App() {
                   value={manualPausePhone}
                   onChange={e => setManualPausePhone(e.target.value)}
                   placeholder="Ej: +50371234567 o 50371234567"
-                  className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-sm text-zinc-100 outline-none font-mono focus:border-amber-400/50"
+                  className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-sm text-zinc-100 outline-none font-mono focus:border-amber-400/50"
                 />
                 <span className="text-[11px] text-zinc-500 mt-1 block">Número de WhatsApp del cliente con código de país.</span>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
                   Motivo de la Pausa
                 </label>
                 <input
@@ -3436,12 +3947,12 @@ export default function App() {
                   value={manualPauseReason}
                   onChange={e => setManualPauseReason(e.target.value)}
                   placeholder="Ej: Atención personalizada con asesor comercial"
-                  className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-xs text-zinc-200 outline-none focus:border-amber-400/50"
+                  className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none focus:border-amber-400/50"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
                   Etiqueta Directa del Chat (Tag)
                 </label>
                 <div className="flex flex-wrap gap-1.5 mb-2">
@@ -3450,10 +3961,10 @@ export default function App() {
                       key={t}
                       type="button"
                       onClick={() => setManualPauseTag(t)}
-                      className={`text-[10px] font-bold px-2 py-0.5 rounded border transition-all ${
+                      className={`text-[10px] font-medium px-2 py-0.5 rounded-md border transition-all ${
                         manualPauseTag === t
                           ? 'border-amber-400 bg-amber-500/20 text-amber-300'
-                          : 'border-[#1f2330] bg-[#0e1017] text-zinc-400 hover:text-zinc-200'
+                          : 'border-[#2e2e2e] bg-[#141414] text-zinc-400 hover:text-zinc-200'
                       }`}
                     >
                       {t}
@@ -3465,12 +3976,12 @@ export default function App() {
                   value={manualPauseTag}
                   onChange={e => setManualPauseTag(e.target.value.toUpperCase())}
                   placeholder="Ej: COTIZACIÓN"
-                  className="w-full px-3 py-2 bg-[#0e1017] border border-[#1f2330] rounded-lg text-xs text-zinc-100 font-mono outline-none focus:border-amber-400/50"
+                  className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-100 font-mono outline-none focus:border-amber-400/50"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1.5">
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5">
                   Nota para el Asesor (Lo que el cliente busca)
                 </label>
                 <textarea
@@ -3478,22 +3989,22 @@ export default function App() {
                   value={manualPauseNotes}
                   onChange={e => setManualPauseNotes(e.target.value)}
                   placeholder="Ej: El cliente desea cotización de paquetes empresariales."
-                  className="w-full px-3.5 py-2 bg-[#0e1017] border border-[#1f2330] rounded-lg text-xs text-zinc-200 outline-none focus:border-amber-400/50 resize-none font-sans"
+                  className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none focus:border-amber-400/50 resize-none font-sans"
                 />
               </div>
 
-              <div className="pt-2 flex justify-end gap-2.5">
+              <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setShowManualPauseModal(false)}
-                  className="px-4 py-2 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-xs font-medium text-zinc-300 transition-colors"
+                  className="px-3 py-1.5 rounded-md bg-zinc-850 hover:bg-zinc-800 text-[13px] font-medium text-zinc-300 transition-colors"
                 >
                   Cancelar
                 </button>
                 <button
                   type="submit"
                   disabled={isPausingManual}
-                  className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-400 text-zinc-950 font-medium text-[13px] transition-colors flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {isPausingManual ? <RefreshCw size={14} className="animate-spin" /> : <Pause size={14} />}
                   <span>Pausar IA</span>
@@ -3506,10 +4017,10 @@ export default function App() {
 
       {/* Modal para editar Tag Directo y Nota para el Asesor */}
       {editingHandoff && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#151720] border border-[#1f2330] rounded-xl max-w-lg w-full shadow-2xl animate-scaleUp">
-            <div className="p-4 border-b border-[#1f2330] flex items-center justify-between">
-              <div className="flex items-center gap-2 text-amber-400 font-bold text-sm">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2">
+          <div className="bg-[#1c1c1c] border border-[#2e2e2e] rounded-md max-w-lg w-full animate-scaleUp">
+            <div className="p-2 border-b border-[#2e2e2e] flex items-center justify-between">
+              <div className="flex items-center gap-2 text-amber-400 font-medium text-sm">
                 <Tag size={16} />
                 <span>Gestionar Tag y Nota para el Asesor</span>
               </div>
@@ -3521,26 +4032,26 @@ export default function App() {
               </button>
             </div>
 
-            <div className="p-5 space-y-4">
-              <div className="flex items-center justify-between p-3 rounded-lg bg-[#0e1017] border border-[#1f2330]">
+            <div className="p-2 space-y-2">
+              <div className="flex items-center justify-between p-4 rounded-md bg-[#141414] border border-[#2e2e2e]">
                 <span className="text-xs text-zinc-400 font-medium">Cliente / Sesión:</span>
-                <span className="font-mono text-xs font-bold text-zinc-100">{editingHandoff.session_id}</span>
+                <span className="font-mono text-xs font-medium text-zinc-100">{editingHandoff.session_id}</span>
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-2">
+                <label className="block text-xs font-medium text-zinc-300 mb-2">
                   Etiqueta Directa del Chat (Tag)
                 </label>
-                <div className="flex flex-wrap gap-1.5 mb-2.5">
+                <div className="flex flex-wrap gap-1.5 mb-2">
                   {HANDOFF_TAG_PRESETS.map((t) => (
                     <button
                       key={t}
                       type="button"
                       onClick={() => setEditTag(t)}
-                      className={`text-[11px] font-bold px-2.5 py-1 rounded-md border transition-all ${
+                      className={`text-[11px] font-medium px-3 py-1 rounded-md border transition-all ${
                         editTag === t
                           ? 'border-amber-400 bg-amber-500/20 text-amber-300'
-                          : 'border-[#1f2330] bg-[#0e1017] text-zinc-400 hover:text-zinc-200'
+                          : 'border-[#2e2e2e] bg-[#141414] text-zinc-400 hover:text-zinc-200'
                       }`}
                     >
                       {t}
@@ -3552,12 +4063,12 @@ export default function App() {
                   value={editTag}
                   onChange={e => setEditTag(e.target.value.toUpperCase())}
                   placeholder="O escribe una etiqueta personalizada..."
-                  className="w-full px-3.5 py-2 bg-[#0e1017] border border-[#1f2330] rounded-lg text-xs text-zinc-100 font-mono outline-none focus:border-amber-400/50"
+                  className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-100 font-mono outline-none focus:border-amber-400/50"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-bold text-zinc-300 uppercase tracking-wider mb-1.5 flex items-center justify-between">
+                <label className="block text-xs font-medium text-zinc-300 mb-1.5 flex items-center justify-between">
                   <span>Nota Ejecutiva para el Asesor</span>
                   <span className="text-[10px] text-zinc-500 font-normal">¿Qué busca o necesita el cliente?</span>
                 </label>
@@ -3566,15 +4077,15 @@ export default function App() {
                   value={editNotes}
                   onChange={e => setEditNotes(e.target.value)}
                   placeholder="Escribe el resumen de lo que el cliente requiere para que el asesor lo sepa de inmediato..."
-                  className="w-full px-3.5 py-2.5 bg-[#0e1017] border border-[#1f2330] rounded-lg text-xs text-zinc-200 outline-none leading-relaxed focus:border-amber-400/50 font-sans resize-none"
+                  className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none leading-relaxed focus:border-amber-400/50 font-sans resize-none"
                 />
               </div>
 
-              <div className="pt-2 flex justify-end gap-2.5">
+              <div className="pt-2 flex justify-end gap-2">
                 <button
                   type="button"
                   onClick={() => setEditingHandoff(null)}
-                  className="px-4 py-2 rounded-lg bg-zinc-850 hover:bg-zinc-800 text-xs font-medium text-zinc-300 transition-colors"
+                  className="px-3 py-1.5 rounded-md bg-zinc-850 hover:bg-zinc-800 text-[13px] font-medium text-zinc-300 transition-colors"
                 >
                   Cancelar
                 </button>
@@ -3582,7 +4093,7 @@ export default function App() {
                   type="button"
                   disabled={isSavingEdit}
                   onClick={() => handleUpdateHandoffMeta(editingHandoff.session_id)}
-                  className="px-4 py-2 rounded-lg bg-amber-500 hover:bg-amber-400 text-zinc-950 font-bold text-xs transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  className="px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-400 text-zinc-950 font-medium text-[13px] transition-colors flex items-center gap-1.5 disabled:opacity-50"
                 >
                   {isSavingEdit ? <RefreshCw size={14} className="animate-spin" /> : <Save size={14} />}
                   <span>Guardar Tag y Nota</span>
@@ -3597,10 +4108,10 @@ export default function App() {
           MODAL DE LECTURA COMPLETA
           ============================================================== */}
       {selectedDoc && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-[#151720] border border-[#1f2330] rounded-xl max-w-2xl w-full max-h-[85vh] flex flex-col shadow-2xl animate-scaleUp">
-            <div className="p-4 border-b border-[#1f2330] flex items-center justify-between">
-              <h3 className="font-bold text-base text-zinc-100 truncate pr-4">{selectedDoc.title}</h3>
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2">
+          <div className="bg-[#1c1c1c] border border-[#2e2e2e] rounded-md max-w-2xl w-full max-h-[85vh] flex flex-col animate-scaleUp">
+            <div className="p-2 border-b border-[#2e2e2e] flex items-center justify-between">
+              <h3 className="font-medium text-base text-zinc-100 truncate pr-2">{selectedDoc.title}</h3>
               <button
                 onClick={() => setSelectedDoc(null)}
                 className="text-zinc-400 hover:text-white p-1 rounded-md hover:bg-zinc-800 transition-colors"
@@ -3608,7 +4119,7 @@ export default function App() {
                 <X size={18} />
               </button>
             </div>
-            <div className="p-6 overflow-y-auto font-mono text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed select-text">
+            <div className="p-2 overflow-y-auto font-mono text-xs text-zinc-300 whitespace-pre-wrap leading-relaxed select-text">
               {selectedDoc.content}
             </div>
           </div>
@@ -3621,7 +4132,7 @@ export default function App() {
       {toast.show && (
         <div
           style={toast.isError ? {} : { borderLeftColor: themeColor }}
-          className={`fixed bottom-6 right-6 z-50 px-4 py-3 rounded-lg shadow-2xl text-sm font-semibold flex items-center gap-2.5 bg-[#161a24] text-white border-l-4 ${toast.isError ? 'border-red-500' : ''}`}
+          className={`fixed bottom-6 right-6 z-50 px-3 py-1.5 rounded-md text-sm font-semibold flex items-center gap-2 bg-[#1f1f1f] text-white border-l-4 ${toast.isError ? 'border-red-500' : ''}`}
         >
           {toast.isError ? <AlertCircle size={18} className="text-red-400" /> : <CheckCircle2 size={18} style={{ color: themeColor }} />}
           <span>{toast.message}</span>
@@ -3630,4 +4141,526 @@ export default function App() {
 
     </div>
   );
+}
+
+// ==============================================================
+// CANAL DE WHATSAPP: BAILEYS (QR) O META CLOUD API OFICIAL
+// ==============================================================
+const META_FIELDS = [
+  'meta_access_token', 'meta_phone_number_id', 'meta_waba_id',
+  'meta_verify_token', 'meta_app_secret', 'meta_api_version', 'public_base_url'
+];
+
+const CHANNEL_OPTIONS = [
+  {
+    id: 'baileys',
+    title: 'WhatsApp Web (Baileys)',
+    badge: 'Económico',
+    description: 'Se vincula escaneando un QR. Sin costo por mensaje, pero no es oficial: WhatsApp puede bloquear el número. Usa un número dedicado.',
+    icon: QrCode
+  },
+  {
+    id: 'meta',
+    title: 'Meta Cloud API (oficial)',
+    badge: 'Recomendado para clientes serios',
+    description: 'API oficial de WhatsApp Business. Sin riesgo de bloqueo; responder a clientes es gratis y solo se pagan plantillas enviadas por el negocio.',
+    icon: ShieldCheck
+  }
+];
+
+const generateVerifyToken = () => {
+  const bytes = new Uint8Array(18);
+  crypto.getRandomValues(bytes);
+  return 'zenith_' + Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+};
+
+function SecretInput({ value, onChange, placeholder }) {
+  const [visible, setVisible] = useState(false);
+  return (
+    <div className="relative">
+      <input
+        type={visible ? 'text' : 'password'}
+        value={value}
+        onChange={e => onChange(e.target.value)}
+        placeholder={placeholder}
+        autoComplete="off"
+        className="w-full bg-[#121212] border border-[#2e2e2e] focus:border-zinc-500 rounded-md pl-3 pr-10 py-2 text-sm font-mono outline-none transition-colors"
+      />
+      <button
+        type="button"
+        onClick={() => setVisible(v => !v)}
+        className="absolute right-2.5 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+        aria-label={visible ? 'Ocultar' : 'Mostrar'}
+      >
+        {visible ? <EyeOff size={15} /> : <Eye size={15} />}
+      </button>
+    </div>
+  );
+}
+
+function ChannelField({ label, hint, children }) {
+  return (
+    <label className="block space-y-1.5">
+      <span className="text-xs font-semibold text-zinc-300">{label}</span>
+      {children}
+      {hint && <span className="block text-[11px] text-zinc-500">{hint}</span>}
+    </label>
+  );
+}
+
+function WhatsAppChannelPanel({ themeColor, showToast, onChannelChange }) {
+  const [channel, setChannel] = useState('baileys');
+  const [savedChannel, setSavedChannel] = useState('baileys');
+  const [form, setForm] = useState(() => Object.fromEntries(META_FIELDS.map(f => [f, ''])));
+  const [info, setInfo] = useState(null);
+  const [testResult, setTestResult] = useState(null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isTesting, setIsTesting] = useState(false);
+  const [copiedField, setCopiedField] = useState('');
+
+  const loadChannel = async () => {
+    try {
+      const [settingsRes, infoRes] = await Promise.all([
+        apiFetch(`${API_BASE}/api/settings`),
+        apiFetch(`${API_BASE}/api/whatsapp/channel`)
+      ]);
+      if (settingsRes.ok) {
+        const data = await settingsRes.json();
+        const active = data.whatsapp_channel === 'meta' ? 'meta' : 'baileys';
+        setChannel(active);
+        setSavedChannel(active);
+        setForm(Object.fromEntries(META_FIELDS.map(f => [f, data[f] || ''])));
+        onChannelChange(active);
+      }
+      if (infoRes.ok) setInfo(await infoRes.json());
+    } catch (err) {
+      console.warn('Error cargando el canal de WhatsApp:', err);
+    }
+  };
+
+  useEffect(() => {
+    loadChannel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const setField = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
+
+  const copyValue = async (field, value) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(''), 1500);
+    } catch {
+      showToast('No se pudo copiar al portapapeles.', true);
+    }
+  };
+
+  const handleSave = async () => {
+    if (channel === 'meta' && (!form.meta_access_token || !form.meta_phone_number_id)) {
+      showToast('Para activar Meta necesitas al menos el token de acceso y el Phone Number ID.', true);
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const res = await apiFetch(`${API_BASE}/api/settings`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ whatsapp_channel: channel, ...form })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(typeof err.detail === 'string' ? err.detail : 'Revisa los datos ingresados.');
+      }
+      showToast(channel === 'meta'
+        ? '✅ Canal Meta Cloud API activado. Baileys deja de responder mensajes.'
+        : '✅ Canal WhatsApp Web (Baileys) activado.');
+      await loadChannel();
+    } catch (err) {
+      showToast('Error al guardar el canal: ' + err.message, true);
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleTest = async () => {
+    setIsTesting(true);
+    setTestResult(null);
+    try {
+      const res = await apiFetch(`${API_BASE}/api/whatsapp/meta/test`, { method: 'POST' });
+      setTestResult(await res.json());
+    } catch (err) {
+      setTestResult({ connected: false, error: err.message });
+    } finally {
+      setIsTesting(false);
+    }
+  };
+
+  const webhookUrl = info?.meta?.webhook_url || '';
+  const missing = info?.meta?.missing_fields || [];
+  const hasUnsavedChannel = channel !== savedChannel;
+
+  return (
+    <div className="p-4 bg-[#171717] border border-[#2e2e2e] rounded-md space-y-2">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <h2 className="text-base font-medium text-zinc-100">Canal de WhatsApp</h2>
+          <p className="text-xs text-zinc-400">
+            Elige cómo se conecta el asistente. Activo ahora:{' '}
+            <span className="font-semibold" style={{ color: themeColor }}>
+              {savedChannel === 'meta' ? 'Meta Cloud API' : 'WhatsApp Web (Baileys)'}
+            </span>
+          </p>
+        </div>
+        <button
+          onClick={handleSave}
+          disabled={isSaving}
+          className="inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-md text-[13px] font-medium text-black disabled:opacity-50 transition-all"
+          style={{ backgroundColor: themeColor }}
+        >
+          {isSaving ? <RefreshCw size={13} className="animate-spin" /> : <Save size={13} />}
+          {hasUnsavedChannel ? 'Guardar y cambiar de canal' : 'Guardar configuración'}
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        {CHANNEL_OPTIONS.map(option => {
+          const Icon = option.icon;
+          const selected = channel === option.id;
+          return (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => setChannel(option.id)}
+              className={`text-left p-2 rounded-md border transition-all ${selected ? 'bg-white/[0.03]' : 'border-[#2e2e2e] hover:border-zinc-600'}`}
+              style={selected ? { borderColor: themeColor } : undefined}
+              aria-pressed={selected}
+            >
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <Icon size={18} style={{ color: selected ? themeColor : undefined }} className={selected ? '' : 'text-zinc-400'} />
+                  <span className="text-sm font-medium text-zinc-100">{option.title}</span>
+                </div>
+                {selected ? <CheckCircle2 size={16} style={{ color: themeColor }} /> : <span className="w-4 h-4 rounded-full border border-zinc-600" />}
+              </div>
+              <span className="inline-block mt-2 text-[10px] font-medium px-2 py-0.5 rounded-md bg-zinc-800 text-zinc-300">
+                {option.badge}
+              </span>
+              <p className="mt-2 text-xs text-zinc-400 leading-relaxed">{option.description}</p>
+            </button>
+          );
+        })}
+      </div>
+
+      {channel === 'baileys' && (
+        <div className="flex items-start gap-2 text-xs text-amber-200 bg-amber-500/10 border border-amber-500/20 rounded-md px-2.5 py-1.5">
+          <AlertCircle size={14} className="mt-0.5 shrink-0" />
+          <span>
+            Baileys no es una API oficial. Usa un número dedicado (no el personal del dueño) y avisa al cliente del riesgo de bloqueo.
+            {savedChannel === 'baileys' && ' Vincula el número con el código QR de abajo.'}
+          </span>
+        </div>
+      )}
+
+      {channel === 'meta' && (
+        <div className="space-y-2">
+          <ol className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs text-zinc-400">
+            {[
+              <>En <a className="underline hover:text-zinc-200" href="https://developers.facebook.com/apps" target="_blank" rel="noreferrer">developers.facebook.com</a> crea una app de tipo Business y agrega el producto WhatsApp.</>,
+              <>En WhatsApp → Configuración de la API copia el <b className="text-zinc-300">Phone Number ID</b>. Crea un usuario del sistema en Business Manager y genera un <b className="text-zinc-300">token permanente</b>.</>,
+              <>En Configuración de la app → Básica copia el <b className="text-zinc-300">App Secret</b> (protege el webhook).</>,
+              <>En WhatsApp → Configuración pega la <b className="text-zinc-300">URL del webhook</b> y el <b className="text-zinc-300">token de verificación</b>, y suscríbete al campo <code>messages</code>.</>
+            ].map((step, i) => (
+              <li key={i} className="flex gap-2 p-2 bg-[#121212] border border-[#2e2e2e] rounded-md">
+                <span className="w-5 h-5 shrink-0 rounded-full flex items-center justify-center text-[10px] font-medium text-black" style={{ backgroundColor: themeColor }}>{i + 1}</span>
+                <span className="leading-relaxed">{step}</span>
+              </li>
+            ))}
+          </ol>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <ChannelField label="Token de acceso permanente" hint="Si ves ••••, ya hay un token guardado. Escribe uno nuevo solo para reemplazarlo.">
+              <SecretInput value={form.meta_access_token} onChange={v => setField('meta_access_token', v)} placeholder="EAAG..." />
+            </ChannelField>
+            <ChannelField label="Phone Number ID">
+              <input
+                value={form.meta_phone_number_id}
+                onChange={e => setField('meta_phone_number_id', e.target.value)}
+                placeholder="Ej. 109876543210987"
+                className="w-full bg-[#121212] border border-[#2e2e2e] focus:border-zinc-500 rounded-md px-3 py-2 text-sm font-mono outline-none transition-colors"
+              />
+            </ChannelField>
+            <ChannelField label="App Secret" hint="Sin App Secret el backend rechaza todos los mensajes del webhook.">
+              <SecretInput value={form.meta_app_secret} onChange={v => setField('meta_app_secret', v)} placeholder="App Secret de la app de Meta" />
+            </ChannelField>
+            <ChannelField label="WhatsApp Business Account ID (opcional)">
+              <input
+                value={form.meta_waba_id}
+                onChange={e => setField('meta_waba_id', e.target.value)}
+                placeholder="Para plantillas y métricas"
+                className="w-full bg-[#121212] border border-[#2e2e2e] focus:border-zinc-500 rounded-md px-3 py-2 text-sm font-mono outline-none transition-colors"
+              />
+            </ChannelField>
+            <ChannelField label="URL pública del backend (HTTPS)" hint="Dominio con HTTPS que apunta a este backend (por ejemplo, con Caddy o Cloudflare Tunnel).">
+              <input
+                value={form.public_base_url}
+                onChange={e => setField('public_base_url', e.target.value)}
+                placeholder="https://bot.tuempresa.com"
+                className="w-full bg-[#121212] border border-[#2e2e2e] focus:border-zinc-500 rounded-md px-3 py-2 text-sm font-mono outline-none transition-colors"
+              />
+            </ChannelField>
+            <ChannelField label="Versión de Graph API">
+              <input
+                value={form.meta_api_version}
+                onChange={e => setField('meta_api_version', e.target.value)}
+                placeholder="v21.0"
+                className="w-full bg-[#121212] border border-[#2e2e2e] focus:border-zinc-500 rounded-md px-3 py-2 text-sm font-mono outline-none transition-colors"
+              />
+            </ChannelField>
+          </div>
+
+          <div className="p-2 bg-[#121212] border border-[#2e2e2e] rounded-md space-y-2">
+            <p className="text-xs font-semibold text-zinc-300">Datos para pegar en Meta (WhatsApp → Configuración → Webhook)</p>
+            <div className="space-y-1.5">
+              <span className="text-[11px] text-zinc-500">URL de devolución de llamada</span>
+              <div className="flex gap-2">
+                <input readOnly value={webhookUrl} className="flex-1 min-w-0 bg-[#171717] border border-[#2e2e2e] rounded-md px-3 py-2 text-xs font-mono text-zinc-300" />
+                <button type="button" onClick={() => copyValue('webhook', webhookUrl)} className="px-3 rounded-md border border-[#2e2e2e] bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300" aria-label="Copiar URL">
+                  {copiedField === 'webhook' ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+              </div>
+              {info && !info.meta?.webhook_is_public_https && (
+                <span className="block text-[11px] text-amber-300">Meta solo acepta URLs públicas con HTTPS. Configura la URL pública del backend y guarda.</span>
+              )}
+            </div>
+            <div className="space-y-1.5">
+              <span className="text-[11px] text-zinc-500">Token de verificación</span>
+              <div className="flex gap-2">
+                <input
+                  value={form.meta_verify_token}
+                  onChange={e => setField('meta_verify_token', e.target.value)}
+                  placeholder="Genera uno y pégalo en Meta"
+                  className="flex-1 min-w-0 bg-[#171717] border border-[#2e2e2e] focus:border-zinc-500 rounded-md px-3 py-2 text-xs font-mono outline-none"
+                />
+                <button type="button" onClick={() => setField('meta_verify_token', generateVerifyToken())} className="px-3 rounded-md border border-[#2e2e2e] bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300 text-[13px] font-medium" title="Generar token aleatorio">
+                  <Zap size={14} />
+                </button>
+                <button type="button" onClick={() => copyValue('verify', form.meta_verify_token)} disabled={!form.meta_verify_token} className="px-3 rounded-md border border-[#2e2e2e] bg-zinc-800/60 hover:bg-zinc-800 text-zinc-300 disabled:opacity-40" aria-label="Copiar token">
+                  {copiedField === 'verify' ? <Check size={14} /> : <Copy size={14} />}
+                </button>
+              </div>
+              <span className="block text-[11px] text-zinc-500">Guarda la configuración antes de pulsar "Verificar y guardar" en Meta.</span>
+            </div>
+          </div>
+
+          <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+            <button
+              type="button"
+              onClick={handleTest}
+              disabled={isTesting}
+              className="inline-flex items-center justify-center gap-2 px-3 py-1.5 bg-[#1c1c1c] hover:bg-zinc-800 border border-[#2e2e2e] text-zinc-200 rounded-md text-[13px] font-medium disabled:opacity-50"
+            >
+              <RefreshCw size={13} className={isTesting ? 'animate-spin' : ''} />
+              Probar conexión con Meta
+            </button>
+            {missing.length > 0 && (
+              <span className="text-[11px] text-zinc-500">Pendiente por guardar: {missing.join(', ')}</span>
+            )}
+          </div>
+
+          {testResult && (
+            <div className={`flex items-start gap-2 text-xs rounded-md px-2.5 py-1.5 border ${testResult.connected ? 'text-emerald-200 bg-emerald-500/10 border-emerald-500/20' : 'text-rose-200 bg-rose-500/10 border-rose-500/20'}`}>
+              {testResult.connected ? <Wifi size={14} className="mt-0.5 shrink-0" /> : <WifiOff size={14} className="mt-0.5 shrink-0" />}
+              <span>
+                {testResult.connected
+                  ? <>Conectado: <b>{testResult.verified_name || 'Número verificado'}</b> {testResult.phone_number} · Calidad: {testResult.quality_rating || 'N/D'}</>
+                  : <>No se pudo conectar ({testResult.status || 'ERROR'}). {testResult.error || 'Guarda el token y el Phone Number ID primero.'}</>}
+              </span>
+            </div>
+          )}
+
+          <p className="text-[11px] text-zinc-500 leading-relaxed">
+            Fuera de la ventana de 24 horas desde el último mensaje del cliente, Meta solo permite enviar plantillas aprobadas; los envíos manuales de texto libre fallarán con un aviso.
+          </p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ==============================================================
+// PANTALLA DE ACCESO AL PANEL
+// ==============================================================
+const BRANDING_CACHE_KEY = 'zenith_login_branding';
+
+// Texto negro o blanco según el color de marca, para que el botón siempre se lea bien
+const readableTextOn = (hex) => {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex || '');
+  if (!m) return '#000';
+  const n = parseInt(m[1], 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map(v => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.4 ? '#000' : '#fff';
+};
+
+function LoginScreen({ onLogin }) {
+  const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [capsLock, setCapsLock] = useState(false);
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  // La marca se guarda en el navegador para que la pantalla aparezca con el logo y color correctos al instante
+  const [brand, setBrand] = useState(() => {
+    try { return JSON.parse(localStorage.getItem(BRANDING_CACHE_KEY) || 'null'); } catch { return null; }
+  });
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/public/branding`)
+      .then(res => (res.ok ? res.json() : null))
+      .then(data => {
+        if (!data) return;
+        setBrand(data);
+        try { localStorage.setItem(BRANDING_CACHE_KEY, JSON.stringify(data)); } catch { /* sin espacio: no importa */ }
+      })
+      .catch(() => {});
+  }, []);
+
+  const color = /^#[0-9a-f]{6}$/i.test(brand?.primary_color || '') ? brand.primary_color : '#3ecf8e';
+  const rgb = hexToRgb(color);
+  const company = brand?.company_name || 'Zenith';
+  const botName = brand?.bot_name || 'tu asistente';
+
+  useEffect(() => {
+    document.title = `Iniciar sesión · ${company}`;
+    // El borde de foco de los campos usa el color de marca
+    document.documentElement.style.setProperty('--theme-primary', color);
+    document.documentElement.style.setProperty('--theme-primary-rgb', rgb);
+  }, [company, color, rgb]);
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!password) return;
+    setLoading(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setError(data.detail || 'No se pudo iniciar sesión.');
+        setPassword('');
+        return;
+      }
+      storeToken(data);
+      onLogin();
+    } catch {
+      setError('No se pudo conectar con el servidor. Revisa que el backend esté encendido.');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      className="min-h-screen bg-[#121212] text-zinc-100 font-sans flex flex-col items-center justify-center px-4 py-10"
+      style={{ backgroundImage: `radial-gradient(ellipse 60% 45% at 50% 0%, rgba(${rgb}, 0.14), transparent 70%)` }}
+    >
+      <main className="w-full max-w-[380px]">
+        <div className="flex flex-col items-center text-center mb-8">
+          {brand?.logo ? (
+            <img src={brand.logo} alt={company} className="h-14 w-14 rounded-xl object-contain bg-[#1c1c1c] border border-[#2e2e2e] p-1.5" />
+          ) : (
+            <div
+              className="h-14 w-14 rounded-xl flex items-center justify-center text-2xl font-semibold"
+              style={{ backgroundColor: color, color: readableTextOn(color) }}
+              aria-hidden="true"
+            >
+              {company.trim().charAt(0).toUpperCase()}
+            </div>
+          )}
+          <h1 className="mt-5 text-2xl font-medium tracking-tight">Bienvenido a {company}</h1>
+          <p className="mt-1.5 text-sm text-zinc-400">Inicia sesión para administrar a {botName}.</p>
+        </div>
+
+        <form onSubmit={handleSubmit} className="bg-[#171717] border border-[#2e2e2e] rounded-lg p-6 space-y-4" noValidate>
+          <div className="space-y-1.5">
+            <label htmlFor="admin-password" className="block text-[13px] text-zinc-300">Contraseña de administrador</label>
+            <div className="relative">
+              <input
+                id="admin-password"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => { setPassword(e.target.value); if (error) setError(''); }}
+                onKeyUp={e => setCapsLock(e.getModifierState?.('CapsLock') || false)}
+                onKeyDown={e => setCapsLock(e.getModifierState?.('CapsLock') || false)}
+                autoFocus
+                autoComplete="current-password"
+                aria-invalid={!!error}
+                aria-describedby={error ? 'login-error' : undefined}
+                placeholder="••••••••"
+                className="w-full h-10 bg-[#121212] border border-[#2e2e2e] rounded-md pl-3 pr-10 text-sm outline-none transition-colors"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword(v => !v)}
+                className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded text-zinc-500 hover:text-zinc-200"
+                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
+            {capsLock && <p className="text-[12px] text-amber-300">Bloq Mayús está activado.</p>}
+          </div>
+
+          {error && (
+            <div id="login-error" role="alert" className="flex items-start gap-2 text-[13px] text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-md px-3 py-2">
+              <AlertCircle size={15} className="mt-0.5 shrink-0" /> <span>{error}</span>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading || !password}
+            className="w-full h-10 rounded-md text-sm font-medium transition-[filter,opacity] hover:brightness-110 disabled:opacity-50 disabled:hover:brightness-100 flex items-center justify-center gap-2"
+            style={{ backgroundColor: color, color: readableTextOn(color) }}
+          >
+            {loading && <RefreshCw size={14} className="animate-spin" />}
+            {loading ? 'Verificando…' : 'Iniciar sesión'}
+          </button>
+        </form>
+
+        <p className="mt-6 text-center text-[12px] text-zinc-500">
+          La sesión dura 12 horas. Tras varios intentos fallidos el acceso se bloquea por unos minutos.
+        </p>
+      </main>
+
+      <footer className="mt-10 flex items-center gap-1.5 text-[12px] text-zinc-600">
+        <ShieldCheck size={13} /> Panel protegido · Impulsado por Zenith
+      </footer>
+    </div>
+  );
+}
+
+export default function App() {
+  const [authenticated, setAuthenticated] = useState(() => Boolean(getStoredToken()));
+
+  useEffect(() => {
+    const handleUnauthorized = () => setAuthenticated(false);
+    window.addEventListener(UNAUTHORIZED_EVENT, handleUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, handleUnauthorized);
+  }, []);
+
+  const handleLogout = () => {
+    clearStoredToken();
+    setAuthenticated(false);
+  };
+
+  if (!authenticated) {
+    return <LoginScreen onLogin={() => setAuthenticated(true)} />;
+  }
+  return <Dashboard onLogout={handleLogout} />;
 }

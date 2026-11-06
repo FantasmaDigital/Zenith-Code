@@ -14,6 +14,12 @@ elif root_env.exists():
 else:
     load_dotenv()
 
+# Ajustes del canal de WhatsApp editables desde el panel (Baileys o Meta Cloud API oficial)
+WHATSAPP_CHANNEL_KEYS = [
+    "WHATSAPP_CHANNEL", "META_ACCESS_TOKEN", "META_PHONE_NUMBER_ID", "META_WABA_ID",
+    "META_VERIFY_TOKEN", "META_APP_SECRET", "META_API_VERSION", "PUBLIC_BASE_URL"
+]
+
 class Settings:
     def __init__(self):
         self.COMPANY_NAME: str = os.getenv("COMPANY_NAME", "Fantasma Digital").strip()
@@ -41,6 +47,17 @@ class Settings:
         # Microservicio In-House WhatsApp Gateway (Baileys)
         self.WHATSAPP_GATEWAY_URL: str = os.getenv("WHATSAPP_GATEWAY_URL", "http://localhost:3000").rstrip("/")
         
+        # Canal activo: 'baileys' (WhatsApp Web, económico) o 'meta' (Cloud API oficial, sin riesgo de baneo)
+        self.WHATSAPP_CHANNEL: str = os.getenv("WHATSAPP_CHANNEL", "baileys").lower().strip()
+        self.META_ACCESS_TOKEN: str = os.getenv("META_ACCESS_TOKEN", "").strip()
+        self.META_PHONE_NUMBER_ID: str = os.getenv("META_PHONE_NUMBER_ID", "").strip()
+        self.META_WABA_ID: str = os.getenv("META_WABA_ID", "").strip()
+        self.META_VERIFY_TOKEN: str = os.getenv("META_VERIFY_TOKEN", "").strip()
+        self.META_APP_SECRET: str = os.getenv("META_APP_SECRET", "").strip()
+        self.META_API_VERSION: str = os.getenv("META_API_VERSION", "v21.0").strip()
+        # URL pública HTTPS del backend (Meta debe poder llamar a /webhook/meta)
+        self.PUBLIC_BASE_URL: str = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+
         # Personalización Visual y Multimedia
         self.COMPANY_LOGO: str = os.getenv("COMPANY_LOGO", "").strip()
         self.BOT_AVATAR: str = os.getenv("BOT_AVATAR", "").strip()
@@ -61,6 +78,16 @@ class Settings:
         self.HOST: str = os.getenv("HOST", "0.0.0.0")
         self.PORT: int = int(os.getenv("PORT", "8000"))
         self.DEBUG: bool = os.getenv("DEBUG", "True").lower() in ("true", "1", "yes")
+
+        # Seguridad (solo desde variables de entorno, nunca editables desde el panel)
+        self.ADMIN_PASSWORD: str = os.getenv("ADMIN_PASSWORD", "").strip()
+        self.INTERNAL_API_KEY: str = os.getenv("INTERNAL_API_KEY", "").strip()
+        self.AUTH_SECRET: str = os.getenv("AUTH_SECRET", "").strip()
+        self.ALLOWED_ORIGINS: list = [
+            o.strip().rstrip("/")
+            for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173").split(",")
+            if o.strip()
+        ]
 
     def get_effective_support_phone(self) -> str:
         """
@@ -103,12 +130,12 @@ class Settings:
                 "COMPANY_LOGO", "BOT_AVATAR", "PRIMARY_COLOR",
                 "WELCOME_MESSAGE", "TRANSFER_MESSAGE", "SUPPORT_PHONE", "WEBSITE_URL",
                 "HANDOFF_INACTIVITY_HOURS"
-            ]
+            ] + WHATSAPP_CHANNEL_KEYS
 
             for key in tracked_keys:
                 if key in db_settings and db_settings[key] is not None:
                     val = str(db_settings[key]).strip()
-                    if key == "AI_PROVIDER":
+                    if key in ("AI_PROVIDER", "WHATSAPP_CHANNEL"):
                         val = val.lower()
                     if key == "HANDOFF_INACTIVITY_HOURS":
                         try:
@@ -141,7 +168,7 @@ class Settings:
             "COMPANY_LOGO", "BOT_AVATAR", "PRIMARY_COLOR",
             "WELCOME_MESSAGE", "TRANSFER_MESSAGE", "SUPPORT_PHONE", "WEBSITE_URL",
             "HANDOFF_INACTIVITY_HOURS"
-        ]
+        ] + WHATSAPP_CHANNEL_KEYS
 
         updates = {}
         env_updates = {}
@@ -149,7 +176,7 @@ class Settings:
             if k in allowed_keys and v is not None:
                 val_str = str(v).strip()
                 updates[k] = val_str
-                if k == "AI_PROVIDER":
+                if k in ("AI_PROVIDER", "WHATSAPP_CHANNEL"):
                     setattr(self, k, val_str.lower())
                 elif k == "HANDOFF_INACTIVITY_HOURS":
                     try:

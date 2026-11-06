@@ -18,9 +18,14 @@ services:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
       - WHATSAPP_GATEWAY_URL=http://whatsapp-gateway:3000
-      - DATABASE_URL=postgresql://zenith:zenith_password_2026@postgres:5432/zenith_knowledge
+      - DATABASE_URL=postgresql://zenith:${POSTGRES_PASSWORD:-zenith_password_2026}@postgres:5432/zenith_knowledge
       - HOST=0.0.0.0
       - PORT=8000
+      - DEBUG=${DEBUG:-False}
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Define ADMIN_PASSWORD en .env}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Define INTERNAL_API_KEY en .env}
+      - AUTH_SECRET=${AUTH_SECRET:-}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
     volumes:
       - ./backend-python:/app
     depends_on:
@@ -38,7 +43,8 @@ services:
     container_name: zenith-whatsapp-gateway
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      # Solo accesible desde el propio servidor; el backend lo usa por la red interna de Docker
+      - "127.0.0.1:3000:3000"
     environment:
       - PORT=3000
       - HOST=0.0.0.0
@@ -47,6 +53,8 @@ services:
       - LOG_LEVEL=info
       - INITIAL_RECONNECT_DELAY_MS=2000
       - MAX_RECONNECT_DELAY_MS=30000
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Define ADMIN_PASSWORD en .env}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Define INTERNAL_API_KEY en .env}
     volumes:
       - ./whatsapp-gateway/src:/app/src
       - baileys_auth_data:/app/auth_info_baileys
@@ -64,10 +72,11 @@ services:
     restart: unless-stopped
     environment:
       - POSTGRES_USER=zenith
-      - POSTGRES_PASSWORD=zenith_password_2026
+      # Ojo: si el volumen ya existe, cambiar esta variable NO cambia la contraseña de la BD
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-zenith_password_2026}
       - POSTGRES_DB=zenith_knowledge
-    ports:
-      - "5432:5432"
+    # Sin puertos publicados: solo el backend accede por la red interna de Docker.
+    # Para inspeccionar desde tu máquina usa: docker compose exec postgres psql -U zenith zenith_knowledge
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:

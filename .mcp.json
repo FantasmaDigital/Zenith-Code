@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "sqlite": {
+      "type": "stdio",
+      "command": "npx",
+      "args": [
+        "@modelcontextprotocol/server-sqlite",
+        "db.sqlite"
+      ],
+      "env": {}
+    }
+  }
+}

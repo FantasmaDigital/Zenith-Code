@@ -187,3 +187,4 @@ $RECYCLE.BIN/
 # Herramientas de IA y Agentes
 .gemini/
 .agents/
+.claude/

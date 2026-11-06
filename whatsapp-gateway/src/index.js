@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const config = require('./config');
 const session = require('./whatsapp/session');
@@ -6,15 +7,46 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS Middleware
+if (!config.internalApiKey) {
+  console.error('[WhatsAppGateway] ❌ INTERNAL_API_KEY no está configurada: el backend no podrá usar el gateway.');
+}
+
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a || ''));
+  const bufB = Buffer.from(String(b || ''));
+  return bufA.length > 0 && bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Autenticación: el backend usa X-Internal-Key; una persona en el navegador (/qr) usa
+// HTTP Basic con la contraseña del panel (ADMIN_PASSWORD). Sin CORS: nadie debe llamarlo desde otro sitio.
+// La página del QR y su estado son de solo lectura y se abren sin credenciales; el puerto solo escucha en 127.0.0.1.
+const PUBLIC_READ_PATHS = new Set(['/', '/qr', '/api/qr', '/api/status']);
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+  if (req.method === 'GET' && PUBLIC_READ_PATHS.has(req.path)) {
+    return next();
   }
-  next();
+  if (config.internalApiKey && safeEqual(req.get('X-Internal-Key'), config.internalApiKey)) {
+    return next();
+  }
+  const basic = (req.get('Authorization') || '').match(/^Basic\s+(.+)$/i);
+  if (basic && config.adminPassword) {
+    const decoded = Buffer.from(basic[1], 'base64').toString('utf8');
+    const password = decoded.slice(decoded.indexOf(':') + 1);
+    if (safeEqual(password, config.adminPassword)) {
+      // El navegador reenvía Basic auth en cualquier petición, incluso desde otro sitio (CSRF):
+      // con Basic solo se permiten lecturas y el botón de desvincular de la propia página /qr.
+      if (req.method === 'GET') {
+        return next();
+      }
+      const sameOrigin = req.get('Origin') === `${req.protocol}://${req.get('host')}`;
+      if (req.method === 'POST' && req.path === '/api/logout' && sameOrigin) {
+        return next();
+      }
+      return res.status(403).json({ error: 'Operación no permitida desde el navegador.' });
+    }
+  }
+  res.set('WWW-Authenticate', 'Basic realm="Zenith WhatsApp Gateway", charset="UTF-8"');
+  return res.status(401).json({ error: 'No autorizado.' });
 });
 
 // ==============================================================

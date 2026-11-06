@@ -64,6 +64,12 @@ class DatabaseService:
                             );
                             ALTER TABLE conversation_handoffs ADD COLUMN IF NOT EXISTS tag VARCHAR(50) DEFAULT 'ATENCIÓN HUMANA';
                             ALTER TABLE conversation_handoffs ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
+
+                            CREATE TABLE IF NOT EXISTS zenith_modules (
+                                module_id VARCHAR(100) PRIMARY KEY,
+                                installed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+                                enabled BOOLEAN DEFAULT TRUE
+                            );
                         """)
                     conn.commit()
                     conn.close()
@@ -100,6 +106,11 @@ class DatabaseService:
                         key TEXT PRIMARY KEY,
                         value TEXT NOT NULL,
                         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
+                    CREATE TABLE IF NOT EXISTS zenith_modules (
+                        module_id TEXT PRIMARY KEY,
+                        installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        enabled INTEGER DEFAULT 1
                     );
                     CREATE TABLE IF NOT EXISTS conversation_handoffs (
                         session_id TEXT PRIMARY KEY,
@@ -599,5 +610,90 @@ class DatabaseService:
         except Exception as e:
             logger.error(f"Error listando active handoffs en SQLite: {e}")
         return active
+
+
+    # -------------------------------------------------------------
+    # GESTION DE MODULOS ZENITH
+    # -------------------------------------------------------------
+    def get_installed_modules(self) -> List[str]:
+        installed = []
+        if self.is_postgres:
+            try:
+                conn = self._get_pg_connection()
+                with conn.cursor() as cur:
+                    cur.execute("SELECT module_id FROM zenith_modules WHERE enabled = TRUE ORDER BY installed_at ASC;")
+                    for row in cur.fetchall():
+                        installed.append(row[0])
+                conn.close()
+                return installed
+            except Exception as e:
+                logger.error(f"Error listando modulos instalados en PostgreSQL: {e}")
+        try:
+            conn = self._get_sqlite_connection()
+            cur = conn.cursor()
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS zenith_modules (
+                    module_id TEXT PRIMARY KEY,
+                    installed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    enabled INTEGER DEFAULT 1
+                );
+            """)
+            conn.commit()
+            cur.execute("SELECT module_id FROM zenith_modules WHERE enabled = 1 ORDER BY installed_at ASC;")
+            for row in cur.fetchall():
+                val = row[0] if isinstance(row, tuple) else row["module_id"]
+                installed.append(val)
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error listando modulos instalados en SQLite: {e}")
+        return installed
+
+    def mark_module_installed(self, module_id: str) -> None:
+        clean_id = str(module_id).strip()
+        if self.is_postgres:
+            try:
+                conn = self._get_pg_connection()
+                with conn.cursor() as cur:
+                    cur.execute("""
+                        INSERT INTO zenith_modules (module_id, installed_at, enabled)
+                        VALUES (%s, CURRENT_TIMESTAMP, TRUE)
+                        ON CONFLICT (module_id) DO UPDATE SET enabled = TRUE;
+                    """, (clean_id,))
+                conn.commit()
+                conn.close()
+                return
+            except Exception as e:
+                logger.error(f"Error marcando modulo {clean_id} instalado en PostgreSQL: {e}")
+        try:
+            conn = self._get_sqlite_connection()
+            with conn:
+                conn.execute("""
+                    INSERT INTO zenith_modules (module_id, installed_at, enabled)
+                    VALUES (?, datetime('now'), 1)
+                    ON CONFLICT(module_id) DO UPDATE SET enabled = 1;
+                """, (clean_id,))
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error marcando modulo {clean_id} instalado en SQLite: {e}")
+
+    def mark_module_uninstalled(self, module_id: str) -> None:
+        clean_id = str(module_id).strip()
+        if self.is_postgres:
+            try:
+                conn = self._get_pg_connection()
+                with conn.cursor() as cur:
+                    cur.execute("DELETE FROM zenith_modules WHERE module_id = %s;", (clean_id,))
+                conn.commit()
+                conn.close()
+                return
+            except Exception as e:
+                logger.error(f"Error desinstalando modulo {clean_id} en PostgreSQL: {e}")
+        try:
+            conn = self._get_sqlite_connection()
+            with conn:
+                conn.execute("DELETE FROM zenith_modules WHERE module_id = ?;", (clean_id,))
+            conn.close()
+        except Exception as e:
+            logger.error(f"Error desinstalando modulo {clean_id} en SQLite: {e}")
 
 db_service = DatabaseService()

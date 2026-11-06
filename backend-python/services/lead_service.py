@@ -26,13 +26,47 @@ class LeadService:
 
     def get_or_create_session(self, session_id: str) -> SessionState:
         if session_id not in self._sessions:
-            self._sessions[session_id] = SessionState(session_id=session_id)
+            session = SessionState(session_id=session_id)
+            # Tras un reinicio del servidor, la conversación se recupera desde la base de datos
+            try:
+                from services.customer_service import customer_service
+                session.messages = customer_service.load_recent(session_id)
+            except Exception as e:
+                logger.warning(f"No se pudo recuperar el historial de {session_id}: {e}")
+            self._sessions[session_id] = session
         return self._sessions[session_id]
 
-    def add_message(self, session_id: str, role: str, content: str):
+    def add_message(self, session_id: str, role: str, content: str, contact_name: Optional[str] = None):
+        """role: user | assistant | human (asesor desde el panel; el modelo lo ve como respuesta del negocio)."""
         session = self.get_or_create_session(session_id)
-        session.messages.append({"role": role, "content": content})
+        session.messages.append({"role": "assistant" if role == "human" else role, "content": content})
+        # En memoria solo lo reciente; el historial completo vive en la base de datos
+        if len(session.messages) > 60:
+            session.messages = session.messages[-40:]
         session.updated_at = utc_now()
+        try:
+            from services.customer_service import customer_service
+            customer_service.record_message(session_id, role, content, contact_name=contact_name)
+            if role == "user":
+                from services.automation_service import OPT_OUT_TAG, automation_service
+                if automation_service.detect_opt_out(content):
+                    # Pidió no recibir mensajes: el agente nunca le escribirá por iniciativa propia
+                    customer_service.remember(session_id, tag=OPT_OUT_TAG)
+            if role == "assistant":
+                customer_service.maybe_refresh_summary(session_id)
+        except Exception as e:
+            logger.warning(f"No se pudo guardar el mensaje de {session_id}: {e}")
+
+    def replace_last_assistant_message(self, session_id: str, content: str) -> None:
+        """Alinea memoria y base de datos con lo que realmente se le envió al cliente."""
+        messages = self.get_or_create_session(session_id).messages
+        if messages and messages[-1]["role"] == "assistant":
+            messages[-1]["content"] = content
+        try:
+            from services.customer_service import customer_service
+            customer_service.replace_last_assistant(session_id, content)
+        except Exception as e:
+            logger.warning(f"No se pudo actualizar el último mensaje de {session_id}: {e}")
 
     def set_transferred(
         self,
@@ -229,6 +263,11 @@ class LeadService:
     def reset_session(self, session_id: str):
         if session_id in self._sessions:
             del self._sessions[session_id]
+        try:
+            from services.customer_service import customer_service
+            customer_service.reset_context(session_id)  # el agente empieza de cero; el historial se conserva
+        except Exception:
+            pass
         try:
             from services.db_service import db_service
             db_service.set_handoff(session_id, False, reason="Sesión reiniciada")

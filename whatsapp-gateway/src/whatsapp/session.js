@@ -3,7 +3,8 @@ const {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   Browsers,
-  DisconnectReason
+  DisconnectReason,
+  downloadMediaMessage
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcodeTerminal = require('qrcode-terminal');
@@ -130,6 +131,7 @@ class WhatsAppSession {
 
     // 3. Conexión cerrada (caída de internet, batería, logout, etc.)
     if (connection === 'close') {
+      const qrExpired = this.status === 'WAITING_QR';
       this.status = 'DISCONNECTED';
       this.qrString = null;
       this.qrDataUrl = null;
@@ -146,6 +148,12 @@ class WhatsAppSession {
 
       if (evalResult.shouldCleanAuth) {
         reconnection.cleanAuthDirectory(config.authFolder);
+      }
+
+      // Un QR sin escanear que caduca no es una falla de red: pedir uno nuevo de inmediato, sin backoff
+      if (qrExpired && !evalResult.shouldCleanAuth) {
+        reconnection.attempt = 0;
+        evalResult.delayMs = 1000;
       }
 
       // Reconexión infinita con backoff
@@ -167,16 +175,72 @@ class WhatsAppSession {
       // Ignorar broadcasts y estados de WhatsApp
       if (!remoteJid || remoteJid.includes('@broadcast') || remoteJid.includes('newsletter')) continue;
 
-      // Extraer el texto del mensaje
-      const text = this._extractMessageText(msg);
-      if (!text) continue;
-
-      // Obtener número limpio (ej. 50371234567)
+      // Obtener número limpio de teléfono (ej. 50371234567)
       const senderPhone = remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '');
-      console.log(`[WhatsAppSession] 💬 Mensaje de +${senderPhone}: "${text}"`);
 
-      // Enviar al Asistente Operativo en Python
-      const aiResponse = await forwardToPythonBackend(senderPhone, text);
+      // Extraer el texto del mensaje si viene texto directo o pie de foto
+      const text = this._extractMessageText(msg) || '';
+
+      // Desempaquetar mensaje por si viene dentro de contenedores efímeros o viewOnce
+      const rawMessage = msg.message || {};
+      const unwrappedMessage =
+        rawMessage.ephemeralMessage?.message ||
+        rawMessage.viewOnceMessage?.message ||
+        rawMessage.viewOnceMessageV2?.message ||
+        rawMessage.documentWithCaptionMessage?.message ||
+        rawMessage;
+
+      const audioMsg = unwrappedMessage.audioMessage;
+      const imageMsg = unwrappedMessage.imageMessage;
+
+      const mediaPayload = {};
+
+      if (audioMsg) {
+        try {
+          console.log(`[WhatsAppSession] 🎙️ Nota de voz entrante de +${senderPhone} (${audioMsg.mimetype || 'audio/ogg'}). Descargando buffer...`);
+          const audioBuffer = await downloadMediaMessage(
+            msg,
+            'buffer',
+            {},
+            { logger: this.logger, reuploadRequest: this.sock?.updateMediaMessage }
+          );
+          if (audioBuffer && audioBuffer.length > 0) {
+            mediaPayload.audioBase64 = audioBuffer.toString('base64');
+            mediaPayload.audioMimeType = audioMsg.mimetype || 'audio/ogg; codecs=opus';
+            console.log(`[WhatsAppSession] ✅ Nota de voz descargada (${audioBuffer.length} bytes). Enviando a IA para escuchar y responder...`);
+          }
+        } catch (mediaErr) {
+          console.error(`[WhatsAppSession] ❌ Error descargando audio de +${senderPhone}:`, mediaErr.message);
+        }
+      } else if (imageMsg) {
+        try {
+          console.log(`[WhatsAppSession] 🖼️ Imagen/Comprobante de +${senderPhone}. Descargando buffer...`);
+          const imgBuffer = await downloadMediaMessage(
+            msg,
+            'buffer',
+            {},
+            { logger: this.logger, reuploadRequest: this.sock?.updateMediaMessage }
+          );
+          if (imgBuffer && imgBuffer.length > 0) {
+            mediaPayload.imageBase64 = imgBuffer.toString('base64');
+            mediaPayload.imageMimeType = imageMsg.mimetype || 'image/jpeg';
+            console.log(`[WhatsAppSession] ✅ Imagen descargada (${imgBuffer.length} bytes). Enviando a IA para análisis visual...`);
+          }
+        } catch (mediaErr) {
+          console.error(`[WhatsAppSession] ❌ Error descargando imagen de +${senderPhone}:`, mediaErr.message);
+        }
+      }
+
+      // Si no hay texto, ni audio, ni imagen válida, ignorar mensaje
+      if (!text.trim() && !mediaPayload.audioBase64 && !mediaPayload.imageBase64) continue;
+
+      if (text) {
+        console.log(`[WhatsAppSession] 💬 Mensaje de +${senderPhone}: "${text}"`);
+      }
+
+      // Enviar al Asistente Operativo en Python con texto y/o contenido multimedia
+      // Nombre de perfil de WhatsApp del cliente: alimenta su ficha en el CRM
+      const aiResponse = await forwardToPythonBackend(senderPhone, text, { ...mediaPayload, contactName: msg.pushName || null });
 
       if (aiResponse && aiResponse.reply && aiResponse.reply.trim().length > 0 && !aiResponse.human_handoff_active) {
         console.log(`[WhatsAppSession] 🤖 Respondiendo a +${senderPhone}...`);

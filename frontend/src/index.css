@@ -14,10 +14,12 @@
 
 @layer base {
   body {
-    background-color: #0c0d12;
+    background-color: #121212;
     color: #f3f4f6;
-    font-family: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     -webkit-font-smoothing: antialiased;
+    font-size: 14px;
+    letter-spacing: -0.005em;
   }
 }
 
@@ -30,7 +32,7 @@
   background: transparent;
 }
 *::-webkit-scrollbar-thumb {
-  background: #1f2330;
+  background: #2e2e2e;
   border-radius: 9999px;
 }
 *::-webkit-scrollbar-thumb:hover {
@@ -47,21 +49,21 @@
 .text-\[\#3ecf8e\],
 .text-emerald-400,
 .text-emerald-500,
-[class*="text-[#3ecf8e]"] {
+[class^="text-[#3ecf8e]"], [class*=" text-[#3ecf8e]"] {
   color: var(--theme-primary) !important;
 }
 
 /* Fondos sólidos */
 .bg-\[\#3ecf8e\],
 .bg-emerald-500,
-[class*="bg-[#3ecf8e]"]:not([class*="/"]) {
+[class^="bg-[#3ecf8e]"]:not([class*="/"]), [class*=" bg-[#3ecf8e]"]:not([class*="/"]) {
   background-color: var(--theme-primary) !important;
 }
 
 /* Bordes sólidos */
 .border-\[\#3ecf8e\],
 .border-emerald-500,
-[class*="border-[#3ecf8e]"]:not([class*="/"]) {
+[class^="border-[#3ecf8e]"]:not([class*="/"]), [class*=" border-[#3ecf8e]"]:not([class*="/"]) {
   border-color: var(--theme-primary) !important;
 }
 
@@ -73,8 +75,8 @@
 .bg-emerald-950,
 .bg-emerald-950\/60,
 .bg-emerald-950\/70,
-[class*="bg-[#3ecf8e]/"],
-[class*="bg-emerald-950"] {
+[class^="bg-[#3ecf8e]/"], [class*=" bg-[#3ecf8e]/"],
+[class^="bg-emerald-950"], [class*=" bg-emerald-950"] {
   background-color: rgba(var(--theme-primary-rgb), 0.14) !important;
 }
 
@@ -85,8 +87,8 @@
 .border-emerald-800,
 .border-emerald-800\/50,
 .border-emerald-800\/60,
-[class*="border-[#3ecf8e]/"],
-[class*="border-emerald-800"] {
+[class^="border-[#3ecf8e]/"], [class*=" border-[#3ecf8e]/"],
+[class^="border-emerald-800"], [class*=" border-emerald-800"] {
   border-color: rgba(var(--theme-primary-rgb), 0.35) !important;
 }
 
@@ -138,7 +140,7 @@ input[type="radio"] {
 }
 
 /* Sombras y glow */
-.shadow-emerald-950,
-.shadow-emerald-950\/20 {
+.,
+.\/20 {
   box-shadow: 0 10px 15px -3px rgba(var(--theme-primary-rgb), 0.25) !important;
 }

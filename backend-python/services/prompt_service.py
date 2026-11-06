@@ -1,5 +1,5 @@
 import logging
-from typing import List
+from typing import List, Optional
 from config import settings
 from services.knowledge_service import knowledge_service
 
@@ -36,7 +36,49 @@ def detect_manual_transfer(user_message: str) -> bool:
             return True
     return False
 
-def build_brand_system_prompt() -> str:
+REPLY_TEMPERATURE = 0.6      # algo de variación para sonar humano, sin inventar datos
+REPLY_MAX_TOKENS = 450       # mensajes de chat: cortos
+
+
+def get_live_context(session_id: Optional[str] = None) -> str:
+    """Nota breve que acompaña al mensaje actual (no se guarda en historial ni en el prompt cacheado):
+    datos volátiles de los módulos + memoria del cliente."""
+    parts = []
+    try:
+        from modules.registry import module_registry
+        text = module_registry.get_live_context()
+        if text:
+            parts.append(f"[CONTEXTO EN VIVO, no lo menciones: {text}]")
+    except Exception as e:
+        logger.debug(f"Aviso consultando contexto en vivo: {e}")
+    if session_id:
+        try:
+            from services.customer_service import customer_service
+            memory = customer_service.memory_context(session_id)
+            if memory:
+                parts.append(memory)
+        except Exception as e:
+            logger.debug(f"Aviso consultando memoria del cliente: {e}")
+    return "\n".join(parts)
+
+
+def get_effective_welcome() -> dict:
+    """
+    Saludo único que usa la IA. Regla: el saludo del perfil es el predeterminado para cualquier negocio;
+    si un módulo activo (p. ej. Restaurante) define su propio saludo, ese lo reemplaza. Nunca se mezclan.
+    """
+    try:
+        from modules.registry import module_registry
+        override = module_registry.get_welcome_override()
+        if override:
+            return {"text": override["text"], "source": override["module"], "source_name": override["name"]}
+    except Exception as e:
+        logger.debug(f"Aviso consultando saludo de módulos: {e}")
+    text = (getattr(settings, "WELCOME_MESSAGE", None) or "").strip()
+    return {"text": text, "source": "profile" if text else "", "source_name": "Perfil" if text else ""}
+
+
+def build_brand_system_prompt(agent_key: Optional[str] = None) -> str:
     """
     Construye el System Prompt definitivo para la IA, garantizando que el 100%
     de la información del perfil y Brand Settings (nombre, bot, tono, directrices,
@@ -46,100 +88,81 @@ def build_brand_system_prompt() -> str:
     bot_name = (getattr(settings, "BOT_NAME", None) or "Asistente Operativo").strip()
     bot_tone = (getattr(settings, "BOT_TONE", None) or "Profesional y moderno").strip()
     brand_instructions = (getattr(settings, "BRAND_INSTRUCTIONS", None) or "").strip()
-    welcome_message = (getattr(settings, "WELCOME_MESSAGE", None) or "").strip()
+    welcome_message = get_effective_welcome()["text"]
     transfer_message = get_effective_transfer_message()
     effective_phone = settings.get_effective_support_phone()
     website_url = (getattr(settings, "WEBSITE_URL", None) or "").strip()
-    handoff_hours = getattr(settings, "HANDOFF_INACTIVITY_HOURS", 6.0)
-
-    # Identidad gráfica
-    logo_info = ""
-    company_logo = (getattr(settings, "COMPANY_LOGO", None) or "").strip()
-    if company_logo and not company_logo.startswith("data:"):
-        logo_info = f"\n- Logotipo oficial: {company_logo}"
-
-    avatar_info = ""
-    bot_avatar = (getattr(settings, "BOT_AVATAR", None) or "").strip()
-    if bot_avatar and not bot_avatar.startswith("data:"):
-        avatar_info = f"\n- Avatar oficial del asistente: {bot_avatar}"
-
-    # Canales de contacto
-    contact_lines = []
-    if effective_phone:
-        contact_lines.append(f"- Teléfono / WhatsApp oficial de contacto y soporte: {effective_phone}")
-    if website_url:
-        contact_lines.append(f"- Sitio web oficial de la empresa: {website_url}")
-    contact_section = ("\n" + "\n".join(contact_lines)) if contact_lines else ""
-
-    # Sección de bienvenida
     welcome_section = ""
     if welcome_message:
-        welcome_section = f"""
-[PAUTA OFICIAL DE BIENVENIDA Y SALUDO]
-Mensaje oficial de bienvenida configurado por la empresa:
-"{welcome_message}"
+        welcome_section = (f'\n[SALUDO]\nEn el primer mensaje o si preguntan quién eres, saluda inspirándote en: "{welcome_message}". '
+                           f'Preséntate como {bot_name} de {company_name}.\n')
 
-Instrucción de bienvenida:
-- Si el usuario inicia la conversación, te saluda por primera vez (ejemplo: "hola", "buenos días", "buenas tardes") o pregunta quién eres, debes saludarlo amablemente alineándote e inspirándote de manera coherente en este mensaje de bienvenida oficial.
-- Preséntate siempre como "{bot_name}" de "{company_name}".
-"""
-
-    # Sección de directrices de marca
-    brand_section = ""
-    if brand_instructions:
-        brand_section = f"""
-[DIRECTRICES Y REGLAS DE NEGOCIO OBLIGATORIAS DE LA MARCA]
-{brand_instructions}
-
-IMPORTANTE: Estas directrices de marca representan mandatos corporativos de máxima prioridad. Debes respetarlas y reflejarlas estrictamente en todas tus respuestas y procesos de atención.
-"""
+    brand_section = f"\n[REGLAS DE LA MARCA - MÁXIMA PRIORIDAD]\n{brand_instructions}\n" if brand_instructions else ""
 
     # Contexto de base de conocimiento (In-Memory Hot Cache)
     knowledge_context = knowledge_service.get_context_text()
 
-    prompt = f"""[IDENTIDAD CORPORATIVA Y ROL]
-Eres "{bot_name}", el asistente oficial de inteligencia artificial de {company_name}.
-Tu misión es brindar atención comercial, operativa y de servicio al cliente con máxima fidelidad, respondiendo con exactitud rigurosa basada en la información comprobada y directrices oficiales de la empresa.{logo_info}{avatar_info}{contact_section}
+    # Extensiones dinámicas de módulos instalados (p. ej. Menú de Restaurante)
+    mod_extensions = ""
+    restaurant_active = False
+    try:
+        from modules.registry import module_registry
+        mod_extensions = (module_registry.get_prompt_extensions() or "").strip()
+        restaurant_active = module_registry.is_loaded("restaurant")
+    except Exception as e:
+        logger.debug(f"Aviso consultando extensiones de módulos: {e}")
 
-[PERSONALIDAD Y TONO CONFIGURADOS]
-Tono asignado: {bot_tone}
-- Adopta este tono en cada respuesta con total naturalidad y consistencia.
-- Concisión para mensajería: En WhatsApp y plataformas de chat, los textos largos resultan tediosos. Mantén tus respuestas en 1 a 3 párrafos cortos como máximo, directas al grano y fáciles de leer.
-{welcome_section}
-[CANALES OFICIALES DE ATENCIÓN]
-- Si el usuario solicita el teléfono, WhatsApp o medio de contacto de la empresa, indícale el canal oficial: {effective_phone or "disponible a través de este chat"}.
-- Si el usuario solicita el sitio web o portal de la empresa, indícale: {website_url or "nuestro portal oficial"}.
-{brand_section}
-[POLÍTICA ESTRICTA DE TOLERANCIA CERO A LA ALUCINACIÓN - REGLA FUNDAMENTAL]
-1. COMPROBACIÓN RIGUROSA: Solo puedes responder utilizando hechos comprobados que estén explícitamente escritos en la sección [BASE DE CONOCIMIENTO AUTORIZADA] o en este perfil corporativo oficial ({company_name}, {bot_name}, canales de contacto {effective_phone or ""}, etc.).
-2. NUNCA INVENTES NI SUPONGAS: Está terminantemente prohibido deducir, extrapolar o inventar datos por cortesía, suposición o sentido común.
-   - Si el usuario pregunta por HORARIOS DE ATENCIÓN (días u horas) y estos NO están explícitamente escritos en la base de conocimiento, NO inventes horarios ni asumas días (nunca inventes de lunes a viernes o sábados).
-   - Si el usuario pregunta por PRECIOS, MÉTODOS DE PAGO, UBICACIÓN FÍSICA o POLÍTICAS y no constan en el texto, NO inventes tarifas ni condiciones.
-3. PROTOCOLO OBLIGATORIO ANTE DATOS NO COMPROBADOS:
-   Si cualquier dato consultado NO figura en la base de conocimiento o directrices de marca, responde con total honestidad y transparencia:
-   "Actualmente no cuento con esa información confirmada en mi base de datos, pero con gusto puedo transferirte con un asesor de nuestro equipo para que te lo aclare con exactitud."
-4. FIDELIDAD TOTAL: Si una duda solo está respondida parcialmente en la base de conocimiento, responde únicamente la parte comprobada y aclara que el resto te lo confirmará un asesor.
+    sources = "la BASE DE CONOCIMIENTO" + (", los MÓDULOS ACTIVOS" if mod_extensions else "") + " y este perfil"
+    if restaurant_active:
+        flow = "- Es un restaurante: guía al cliente a ver el menú y pedir, según las reglas del módulo."
+    else:
+        flow = ("- Si preguntan por servicios o proyectos, averigua conversando (una pregunta a la vez) "
+                "qué tipo de proyecto/empresa es y si hay fecha o urgencia.")
 
-[FORMATO VISUAL LIMPIO - CERO ASTERISCOS FEOS]
-- PROHIBIDO usar asteriscos dobles (**) o viñetas con asteriscos (* **Texto:** o * Texto). No ensucies los mensajes con asteriscos crudos.
-- Cuando listes servicios, características o soluciones, utiliza viñetas limpias con emojis atractivos (como 🔹 o •).
-- Deja un salto de línea (doble espacio) entre párrafos y entre cada elemento de la lista para que el texto sea aireado, visualmente agradable y fácil de leer.
-- NUNCA comprimas listas en una sola línea continua.
+    contact = []
+    if effective_phone:
+        contact.append(f"teléfono/WhatsApp {effective_phone}")
+    if website_url:
+        contact.append(f"web {website_url}")
+    contact_line = f"\n- Contacto oficial: {', '.join(contact)}." if contact else ""
 
-[FLUJO DE CALIFICACIÓN DE LEADS]
-Cuando un usuario pregunte por servicios o proyectos, antes de cerrar la conversación, intenta recopilar de forma conversacional (una pregunta a la vez):
-1. ¿Para qué tipo de proyecto o empresa necesita el servicio?
-2. ¿Tienen algún tiempo de urgencia o fecha estimada?
+    prompt = f"""Eres {bot_name}, quien atiende el chat de {company_name}. Hablas como una persona real del equipo: cercano, natural y útil.
+Tono: {bot_tone}.{contact_line}
+{welcome_section}{brand_section}
+[ESTILO]
+- Mensajes cortos de chat (1 a 3 párrafos breves), una pregunta a la vez. Español salvadoreño natural, sin jerga excesiva.
+- Sin asteriscos ni markdown. Para listas usa viñetas • o emojis, un elemento por línea.
 
-[PROTOCOLO DE TRANSFERENCIA A ASESOR HUMANO]
-Si el usuario se molesta, hace preguntas fuera del alcance del negocio, o explícitamente solicita hablar con una persona o asesor humano, detén la asistencia automatizada y responde exactamente con este mensaje oficial de transferencia:
+[VERDAD]
+- Solo usa datos de {sources}. No inventes precios, horarios, pagos, ubicaciones ni políticas.
+- Si no tienes un dato, dilo con naturalidad y ofrece pasarle con un asesor. Si solo sabes una parte, responde esa parte.
+{flow}
+
+[MULTIMEDIA]
+- Notas de voz: entiéndelas (acento salvadoreño) y responde por escrito.
+- Foto de comprobante de pago: confirma monto, fecha, referencia y banco que veas, y di que un asesor validará el pago.
+- Foto de producto: identifícalo con el catálogo y orienta con precio y disponibilidad.
+
+[HERRAMIENTAS]
+- Tienes herramientas para actuar en el sistema; úsalas en lugar de prometer cosas que no puedes hacer.
+- Si el cliente comparte un dato útil y estable (su nombre, una preferencia, alergia, dirección o zona habitual, forma de pago preferida), guárdalo con guardar_dato_cliente sin mencionarlo.
+- Si el cliente se molesta, tiene un reclamo, pide una persona o pregunta algo fuera del negocio, usa transferir_a_asesor (el sistema le avisa). Si no puedes usarla, responde exactamente:
 "{transfer_message}"
-(Nota: El protocolo prevé una ventana de {handoff_hours} horas antes de cualquier reactivación automática si un humano interviene).
 
-[BASE DE CONOCIMIENTO AUTORIZADA - ÚNICA FUENTE DE VERDAD]
-A continuación se detalla la única información oficial y comprobada. Cualquier dato que no figure aquí se considera DESCONOCIDO:
----------------------------------------------
+[BASE DE CONOCIMIENTO]
 {knowledge_context}
----------------------------------------------
 """
+
+    if mod_extensions:
+        prompt += f"\n\n[MÓDULOS ACTIVOS - DATOS OFICIALES]\n{mod_extensions}"
+
+    # Rol del área especializada al final: todo lo anterior es idéntico entre áreas y se aprovecha el caché
+    try:
+        from services import agents
+        role = agents.role_prompt(agent_key)
+        if role:
+            prompt += f"\n\n{role}"
+    except Exception as e:
+        logger.debug(f"Aviso construyendo el rol del área: {e}")
+
     return prompt.strip()

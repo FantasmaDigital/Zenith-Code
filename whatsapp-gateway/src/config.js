@@ -19,6 +19,9 @@ module.exports = {
   pythonBackendUrl: (process.env.PYTHON_BACKEND_URL || 'http://localhost:8000').replace(/\/$/, ''),
   authFolder: path.resolve(process.env.AUTH_FOLDER || './auth_info_baileys'),
   logLevel: process.env.LOG_LEVEL || 'info',
+  // Clave compartida con el backend (header X-Internal-Key) y contraseña del panel para /qr
+  internalApiKey: (process.env.INTERNAL_API_KEY || '').trim(),
+  adminPassword: (process.env.ADMIN_PASSWORD || '').trim(),
   reconnect: {
     initialDelayMs: parseInt(process.env.INITIAL_RECONNECT_DELAY_MS || '2000', 10),
     maxDelayMs: parseInt(process.env.MAX_RECONNECT_DELAY_MS || '30000', 10)
