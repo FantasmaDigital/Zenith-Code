@@ -144,8 +144,8 @@ jobs:
           context: frontend
           file: frontend/Dockerfile.prod
           push: ${{ env.PUSH == 'true' }}
-          # La URL de la API se incrusta en el build del panel
-          build-args: VITE_API_BASE=https://${{ vars.API_DOMAIN || 'api.example.com' }}
+          # El panel llama a la API por su mismo dominio (/backend, proxy de nginx): sin CORS
+          build-args: VITE_API_BASE=/backend
           tags: |
             ${{ steps.meta.outputs.prefix }}/frontend:${{ github.sha }}
             ${{ steps.meta.outputs.prefix }}/frontend:latest
