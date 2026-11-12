@@ -1,0 +1,33 @@
+# Caddy obtiene y renueva los certificados HTTPS automáticamente (Let's Encrypt).
+# Requiere que DOMAIN y API_DOMAIN apunten por DNS a este servidor (puertos 80 y 443 abiertos).
+
+(security_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		-Server
+		-Via
+	}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+	import security_headers
+	header {
+		X-Frame-Options DENY
+		# El panel solo habla con su API; data:/blob: cubren logos en base64, QR y comprobantes PDF.
+		Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: blob: https:; connect-src 'self' https://{$API_DOMAIN}; frame-src 'self' data: blob:; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+	}
+	reverse_proxy frontend:80
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+	import security_headers
+	request_body {
+		max_size 25MB
+	}
+	reverse_proxy python-backend:8000
+}

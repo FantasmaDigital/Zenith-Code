@@ -187,3 +187,7 @@ $RECYCLE.BIN/
 # Herramientas de IA y Agentes
 .gemini/
 .agents/
+.claude/
+
+# Multi-empresa: bases de datos SQLite de cada empresa (modo sin PostgreSQL)
+backend-python/data/

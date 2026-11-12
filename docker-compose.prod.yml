@@ -1,0 +1,140 @@
+# Producción. Dos formas de usarlo:
+#   1) Imágenes publicadas por GitHub Actions (recomendado, lo hace el deploy automático):
+#        IMAGE_PREFIX=ghcr.io/<owner>/zenith-code IMAGE_TAG=<sha> docker compose -f docker-compose.prod.yml pull
+#        IMAGE_PREFIX=... IMAGE_TAG=... docker compose -f docker-compose.prod.yml up -d
+#   2) Compilando en el propio servidor:
+#        docker compose -f docker-compose.prod.yml --env-file .env up -d --build
+# Sin volúmenes de código, sin puertos de app publicados (todo entra por Caddy con HTTPS).
+
+x-hardening: &hardening
+  restart: unless-stopped
+  security_opt:
+    - no-new-privileges:true
+  logging:
+    driver: json-file
+    options: { max-size: "10m", max-file: "5" }
+  networks: [zenith-net]
+
+services:
+  caddy:
+    <<: *hardening
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      - DOMAIN=${DOMAIN:?Define DOMAIN en .env}
+      - API_DOMAIN=${API_DOMAIN:?Define API_DOMAIN en .env}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on: [frontend, python-backend]
+
+  python-backend:
+    <<: *hardening
+    image: ${IMAGE_PREFIX:-zenith}/backend:${IMAGE_TAG:-latest}
+    build:
+      context: ./backend-python
+      dockerfile: Dockerfile.prod
+    environment:
+      - COMPANY_NAME=${COMPANY_NAME:-Mi Empresa}
+      - AI_PROVIDER=${AI_PROVIDER:-gemini}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=${OPENAI_MODEL:-gpt-4o-mini}
+      - WHATSAPP_GATEWAY_URL=http://whatsapp-gateway:3000
+      - DATABASE_URL=postgresql://zenith:${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}@postgres:5432/zenith_knowledge
+      - HOST=0.0.0.0
+      - PORT=8000
+      - DEBUG=False
+      - WEB_CONCURRENCY=1
+      - RATE_LIMIT_ENABLED=true
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Define ADMIN_PASSWORD en .env}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Define INTERNAL_API_KEY en .env}
+      - AUTH_SECRET=${AUTH_SECRET:?Define AUTH_SECRET en .env}
+      - ALLOWED_ORIGINS=https://${DOMAIN}
+      # Invitaciones de usuarios: enlaces al panel y correo saliente (SMTP)
+      - PANEL_URL=https://${DOMAIN}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_SECURITY=${SMTP_SECURITY:-starttls}
+      - PUBLIC_BASE_URL=https://${API_DOMAIN}
+    volumes:
+      - backend_data:/app/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits: { memory: 1g }
+
+  whatsapp-gateway:
+    <<: *hardening
+    image: ${IMAGE_PREFIX:-zenith}/whatsapp-gateway:${IMAGE_TAG:-latest}
+    build:
+      context: ./whatsapp-gateway
+      dockerfile: Dockerfile.prod
+    ports:
+      # Solo local: para ver /qr usa un túnel SSH (ssh -L 3000:127.0.0.1:3000 servidor)
+      - "127.0.0.1:3000:3000"
+    environment:
+      - PORT=3000
+      - HOST=0.0.0.0
+      - PYTHON_BACKEND_URL=http://python-backend:8000
+      - AUTH_FOLDER=/app/auth_info_baileys
+      - LOG_LEVEL=info
+      - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Define ADMIN_PASSWORD en .env}
+      - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Define INTERNAL_API_KEY en .env}
+      - TENANT_ID=${TENANT_ID:-default}
+      - PANEL_URL=https://${DOMAIN}
+    volumes:
+      - baileys_auth_data:/app/auth_info_baileys
+    # Da tiempo a cerrar los sockets de WhatsApp sin corromper credenciales al redeplegar
+    stop_grace_period: 15s
+    depends_on: [python-backend]
+    deploy:
+      resources:
+        limits: { memory: 512m }
+
+  postgres:
+    <<: *hardening
+    image: postgres:16-alpine
+    environment:
+      - POSTGRES_USER=zenith
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?Define POSTGRES_PASSWORD en .env}
+      - POSTGRES_DB=zenith_knowledge
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U zenith -d zenith_knowledge"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  frontend:
+    <<: *hardening
+    image: ${IMAGE_PREFIX:-zenith}/frontend:${IMAGE_TAG:-latest}
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.prod
+      args:
+        VITE_API_BASE: https://${API_DOMAIN:?Define API_DOMAIN en .env}
+
+networks:
+  zenith-net:
+    driver: bridge
+
+volumes:
+  caddy_data:
+  caddy_config:
+  backend_data:
+  baileys_auth_data:
+    name: zenith_baileys_auth_data
+  postgres_data:
+    name: zenith_postgres_data

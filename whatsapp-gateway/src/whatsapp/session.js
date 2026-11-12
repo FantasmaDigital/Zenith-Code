@@ -3,25 +3,96 @@ const {
   useMultiFileAuthState,
   fetchLatestBaileysVersion,
   Browsers,
-  DisconnectReason
+  DisconnectReason,
+  downloadMediaMessage
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
 const qrcodeTerminal = require('qrcode-terminal');
 const QRCode = require('qrcode');
+const path = require('path');
+const fs = require('fs');
 
 const config = require('../config');
 const reconnection = require('./reconnection');
 const { forwardToPythonBackend } = require('../bridge/pythonBridge');
 
+// Mismo formato que el backend (services/tenant_service.py: SLUG_RE) + la empresa principal «default».
+const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
+
+function normalizeTenant(raw) {
+  const slug = (raw || 'default').toString().trim().toLowerCase();
+  return slug || 'default';
+}
+
+function isValidTenant(slug) {
+  return slug === 'default' || SLUG_RE.test(slug);
+}
+
+// La versión del protocolo se consulta a lo sumo cada 6 h (antes: en cada reconexión).
+let cachedVersion = null;
+let cachedVersionAt = 0;
+async function getBaileysVersion() {
+  if (cachedVersion && Date.now() - cachedVersionAt < 6 * 3600 * 1000) return cachedVersion;
+  try {
+    const { version } = await fetchLatestBaileysVersion();
+    cachedVersion = version;
+    cachedVersionAt = Date.now();
+  } catch (e) {
+    console.warn('[WhatsAppSession] No se pudo consultar la versión de WhatsApp Web:', e.message);
+  }
+  return cachedVersion || undefined; // undefined = versión incluida en Baileys
+}
+
+/**
+ * Sesión aislada de WhatsApp Web (Baileys) para una empresa.
+ * Cada empresa tiene su propia carpeta de credenciales, su propio QR y su propio número.
+ *
+ * Ciclo de vida (status):
+ *   CONNECTING / RECONNECTING -> WAITING_QR -> CONNECTED
+ *   QR_EXPIRED: nadie escaneó el QR; se genera otro cuando alguien lo pide (panel o /qr).
+ *   STOPPED:    reconexión detenida (cuenta bloqueada o sesión usada en otro lado); se reanuda a mano.
+ *   DISCONNECTED: transición tras desvincular.
+ */
 class WhatsAppSession {
-  constructor() {
+  constructor(tenantId = 'default', customAuthFolder = null) {
+    this.tenantId = normalizeTenant(tenantId);
+    if (!isValidTenant(this.tenantId)) {
+      throw new Error(`Identificador de empresa inválido: ${this.tenantId}`);
+    }
+
+    // 'default' usa la raíz para mantener sesiones previas; las demás, 'tenants/<slug>'
+    if (customAuthFolder) {
+      this.authFolder = customAuthFolder;
+    } else if (this.tenantId === 'default') {
+      this.authFolder = config.authFolder;
+    } else {
+      this.authFolder = path.join(config.authFolder, 'tenants', this.tenantId);
+    }
+
+    try {
+      fs.mkdirSync(this.authFolder, { recursive: true });
+    } catch (e) {
+      console.warn(`[WhatsAppSession:${this.tenantId}] Aviso creando directorio auth:`, e.message);
+    }
+
     this.sock = null;
+    this.authState = null;
     this.status = 'INITIALIZING';
+    this.stopReason = null;
     this.qrString = null;
     this.qrDataUrl = null;
     this.user = null;
     this.connectedAt = null;
+    // Al crear la sesión se asume que alguien quiere vincular: el primer ciclo de QR dura qrIdleTimeoutMs
+    this.lastQrRequestAt = Date.now();
+    this.initializing = false;
+    this.shuttingDown = false;
     this.logger = pino({ level: config.logLevel === 'silent' ? 'silent' : 'warn' });
+    this.reconnection = new reconnection.ReconnectionManager();
+
+    // Mensajes ya procesados (WhatsApp puede reenviarlos tras reconectar) y cola por chat
+    this.seenMessageIds = new Map();
+    this.chatQueues = new Map();
   }
 
   getStatus() {
@@ -31,300 +102,515 @@ class WhatsAppSession {
       user: this.user,
       connectedAt: this.connectedAt,
       hasQr: Boolean(this.qrString),
-      reconnectAttempts: reconnection.attempt
+      reconnectAttempts: this.reconnection.attempt,
+      stopReason: this.stopReason,
+      tenant: this.tenantId
     };
   }
 
+  /** Datos del QR. Pedirlos reactiva la sesión si el QR había expirado o la reconexión estaba detenida. */
   async getQrData() {
+    this.lastQrRequestAt = Date.now();
+    this.resume();
     return {
       status: this.status,
       qrString: this.qrString,
-      qrDataUrl: this.qrDataUrl
+      qrDataUrl: this.qrDataUrl,
+      tenant: this.tenantId
     };
   }
 
+  /** Relanza la conexión si está detenida (QR expirado / reconexión detenida). */
+  resume() {
+    if (this.shuttingDown) return;
+    if (this.status === 'QR_EXPIRED' || this.status === 'STOPPED') {
+      console.log(`[WhatsAppSession:${this.tenantId}] Reanudando sesión (estado previo: ${this.status}).`);
+      this.stopReason = null;
+      this.reconnection.reset();
+      this.initSession();
+    }
+  }
+
+  hasStoredCredentials() {
+    return fs.existsSync(path.join(this.authFolder, 'creds.json'));
+  }
+
+  /** Quita los listeners y cierra el socket actual sin cerrar la sesión en el teléfono. */
+  _teardownSocket() {
+    const sock = this.sock;
+    this.sock = null;
+    if (!sock) return;
+    try {
+      sock.ev.removeAllListeners('connection.update');
+      sock.ev.removeAllListeners('creds.update');
+      sock.ev.removeAllListeners('messages.upsert');
+    } catch (e) { /* noop */ }
+    try {
+      sock.end(undefined);
+    } catch (e) { /* el socket ya estaba cerrado */ }
+  }
+
   /**
-   * Inicializa o reinicia la conexión del socket de WhatsApp Web.
+   * Inicializa o reinicia la conexión. Nunca deja dos sockets vivos para la misma empresa:
+   * antes cada reconexión creaba un socket nuevo sin cerrar el anterior (respuestas duplicadas y fugas de memoria).
    */
   async initSession() {
-    this.status = reconnection.attempt > 0 ? 'RECONNECTING' : 'CONNECTING';
-    console.log(`[WhatsAppSession] Iniciando sesión Baileys (Estado: ${this.status})...`);
+    if (this.initializing || this.shuttingDown) return;
+    this.initializing = true;
+    this.reconnection.cancel();
+    this._teardownSocket();
+
+    this.status = this.reconnection.attempt > 0 ? 'RECONNECTING' : 'CONNECTING';
+    console.log(`[WhatsAppSession:${this.tenantId}] Iniciando sesión Baileys (Estado: ${this.status})...`);
 
     try {
-      const { state, saveCreds } = await useMultiFileAuthState(config.authFolder);
-      const { version, isLatest } = await fetchLatestBaileysVersion();
+      const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
+      const version = await getBaileysVersion();
+      if (this.shuttingDown) return;
 
-      console.log(`[WhatsAppSession] Usando versión WA Web v${version.join('.')}, isLatest: ${isLatest}`);
-
-      this.sock = makeWASocket({
-        version,
+      const sock = makeWASocket({
+        ...(version ? { version } : {}),
         logger: this.logger,
-        printQRInTerminal: false, // Lo manejamos nosotros con qrcode-terminal y web
+        printQRInTerminal: false,
         auth: state,
-        browser: Browsers.ubuntu('Chrome'),
+        browser: Browsers.ubuntu(`Zenith-${this.tenantId}`),
         syncFullHistory: false,
-        markOnlineOnConnect: true,
+        // false: el teléfono del negocio sigue recibiendo notificaciones (necesario para la atención humana)
+        markOnlineOnConnect: false,
         connectTimeoutMs: 60000,
         defaultQueryTimeoutMs: 60000,
         keepAliveIntervalMs: 25000,
         emitOwnEvents: false
       });
+      this.sock = sock;
+      this.authState = state;
 
-      // Guardar cambios en las credenciales
-      this.sock.ev.on('creds.update', saveCreds);
-
-      // Manejar cambios de estado y QR
-      this.sock.ev.on('connection.update', (update) => this._handleConnectionUpdate(update));
-
-      // Manejar mensajes entrantes
-      this.sock.ev.on('messages.upsert', (data) => this._handleMessagesUpsert(data));
-
+      // Cada handler ignora eventos de sockets viejos ya reemplazados
+      sock.ev.on('creds.update', async () => {
+        try {
+          await saveCreds();
+        } catch (e) {
+          console.error(`[WhatsAppSession:${this.tenantId}] Error guardando credenciales:`, e.message);
+        }
+      });
+      sock.ev.on('connection.update', (update) => {
+        if (sock !== this.sock) return;
+        this._handleConnectionUpdate(update).catch((e) =>
+          console.error(`[WhatsAppSession:${this.tenantId}] Error en connection.update:`, e.message));
+      });
+      sock.ev.on('messages.upsert', (data) => {
+        if (sock !== this.sock) return;
+        this._handleMessagesUpsert(data);
+      });
     } catch (error) {
-      console.error('[WhatsAppSession] Error fatal inicializando socket:', error.message);
-      this.status = 'DISCONNECTED';
-      const delay = reconnection._calculateBackoffDelay();
-      reconnection.scheduleReconnect(delay, () => this.initSession());
+      console.error(`[WhatsAppSession:${this.tenantId}] Error inicializando socket:`, error.message);
+      this.status = 'RECONNECTING';
+      this.reconnection.scheduleReconnect(this.reconnection._calculateBackoffDelay(), () => this.initSession());
+    } finally {
+      this.initializing = false;
     }
   }
 
-  /**
-   * Procesa el ciclo de vida de la conexión: QR, apertura y desconexión.
-   */
   async _handleConnectionUpdate(update) {
     const { connection, lastDisconnect, qr } = update;
 
-    // 1. Si hay un código QR para escanear
     if (qr) {
       this.status = 'WAITING_QR';
       this.qrString = qr;
-
       try {
         this.qrDataUrl = await QRCode.toDataURL(qr, { margin: 2, scale: 6 });
       } catch (err) {
-        console.error('[WhatsAppSession] Error convirtiendo QR a DataURL:', err.message);
+        console.error(`[WhatsAppSession:${this.tenantId}] Error convirtiendo QR a DataURL:`, err.message);
       }
-
-      console.log('\n=============================================================');
-      console.log('  📲 ESCANEA ESTE CÓDIGO QR DESDE TU WHATSAPP (Dispositivos vinculados)');
-      console.log('  También disponible en la web: http://localhost:' + config.port + '/qr');
-      console.log('=============================================================\n');
-      qrcodeTerminal.generate(qr, { small: true });
+      console.log(`\n[WhatsAppSession:${this.tenantId}] 📲 Nuevo QR generado para empresa "${this.tenantId}"`);
+      if (this.tenantId === 'default') {
+        qrcodeTerminal.generate(qr, { small: true });
+      }
     }
 
-    // 2. Conexión establecida con éxito
     if (connection === 'open') {
       this.status = 'CONNECTED';
+      this.stopReason = null;
       this.qrString = null;
       this.qrDataUrl = null;
       this.connectedAt = new Date().toISOString();
-      this.user = this.sock.user;
-      reconnection.reset();
+      this.user = this.sock?.user || null;
+      this.reconnection.reset();
 
       const phoneNumber = this.user?.id ? this.user.id.split(':')[0] : 'Desconocido';
       console.log('\n=============================================================');
-      console.log(`  ✅ WHATSAPP WEB CONECTADO CON ÉXITO`);
+      console.log(`  ✅ WHATSAPP WEB CONECTADO PARA EMPRESA: [${this.tenantId}]`);
       console.log(`  📱 Teléfono Conectado: +${phoneNumber}`);
       console.log(`  🤖 Nombre: ${this.user?.name || 'Zenith Bot'}`);
       console.log('=============================================================\n');
     }
 
-    // 3. Conexión cerrada (caída de internet, batería, logout, etc.)
     if (connection === 'close') {
-      this.status = 'DISCONNECTED';
-      this.qrString = null;
-      this.qrDataUrl = null;
+      if (this.shuttingDown) return;
+      const evalResult = this.reconnection.evaluateDisconnect(lastDisconnect);
+      const wasPaired = Boolean(this.authState?.creds?.me);
+      const qrWasShown = this.status === 'WAITING_QR';
+      this.connectedAt = null;
+      console.log(`[WhatsAppSession:${this.tenantId}] ⚠️ Conexión cerrada. Razón: ${evalResult.reason}`);
 
-      if (this.sock) {
-        try {
-          this.sock.ev.removeAllListeners();
-        } catch (_) {}
-        this.sock = null;
+      if (evalResult.stop) {
+        this._teardownSocket();
+        this.status = 'STOPPED';
+        this.stopReason = evalResult.reason;
+        this.qrString = null;
+        this.qrDataUrl = null;
+        return;
       }
-
-      const evalResult = reconnection.evaluateDisconnect(lastDisconnect);
-      console.warn(`\n[WhatsAppSession] ⚠️ Conexión cerrada. Motivo: ${evalResult.reason}`);
 
       if (evalResult.shouldCleanAuth) {
-        reconnection.cleanAuthDirectory(config.authFolder);
+        this._teardownSocket();
+        this.user = null;
+        this.qrString = null;
+        this.qrDataUrl = null;
+        this.reconnection.cleanAuthDirectory(this.authFolder);
+      } else if (!wasPaired && evalResult.statusCode !== DisconnectReason.restartRequired) {
+        // Nunca se vinculó y el QR caducó: solo se genera otro si alguien lo pidió hace poco.
+        // Antes se regeneraban QR para siempre en cada empresa sin vincular.
+        const someoneWatching = Date.now() - this.lastQrRequestAt < config.qrIdleTimeoutMs;
+        if (!someoneWatching) {
+          this._teardownSocket();
+          this.status = 'QR_EXPIRED';
+          this.qrString = null;
+          this.qrDataUrl = null;
+          console.log(`[WhatsAppSession:${this.tenantId}] ⏸️ QR sin escanear. Se generará otro cuando se abra el panel o /qr.`);
+          return;
+        }
+        if (qrWasShown) {
+          // QR caducado con alguien mirando: generar otro de inmediato
+          this.reconnection.attempt = 0;
+          evalResult.delayMs = 1000;
+        }
+        // Si ni siquiera llegó a mostrar QR (credenciales corruptas, sin red) se respeta el backoff
       }
 
-      // Reconexión infinita con backoff
-      reconnection.scheduleReconnect(evalResult.delayMs, () => this.initSession());
+      this.status = 'RECONNECTING';
+      this.reconnection.scheduleReconnect(evalResult.delayMs, () => this.initSession());
     }
   }
 
-  /**
-   * Procesa mensajes entrantes y los enruta al backend de Python
-   */
-  async _handleMessagesUpsert({ messages, type }) {
+  // ---------------- Mensajes entrantes ----------------
+
+  _alreadySeen(id) {
+    if (!id) return false;
+    if (this.seenMessageIds.has(id)) return true;
+    this.seenMessageIds.set(id, Date.now());
+    if (this.seenMessageIds.size > 5000) {
+      // Map conserva el orden de inserción: se descartan los más viejos
+      const excess = this.seenMessageIds.size - 4000;
+      let i = 0;
+      for (const key of this.seenMessageIds.keys()) {
+        if (i++ >= excess) break;
+        this.seenMessageIds.delete(key);
+      }
+    }
+    return false;
+  }
+
+  /** Encola por chat: los mensajes de un mismo cliente se procesan en orden; chats distintos, en paralelo. */
+  _enqueue(chatId, task) {
+    const prev = this.chatQueues.get(chatId) || Promise.resolve();
+    const next = prev.then(task).catch((e) =>
+      console.error(`[WhatsAppSession:${this.tenantId}] Error procesando mensaje de ${chatId}:`, e?.message || e));
+    this.chatQueues.set(chatId, next);
+    next.finally(() => {
+      if (this.chatQueues.get(chatId) === next) this.chatQueues.delete(chatId);
+    });
+    return next;
+  }
+
+  _handleMessagesUpsert({ messages, type }) {
     if (type !== 'notify') return;
 
-    for (const msg of messages) {
-      // Ignorar mensajes enviados por el propio bot
-      if (msg.key.fromMe) continue;
+    for (const msg of messages || []) {
+      try {
+        if (!msg?.key || msg.key.fromMe || !msg.message) continue;
+        const remoteJid = msg.key.remoteJid;
+        if (!remoteJid || remoteJid.endsWith('@broadcast') || remoteJid.endsWith('@newsletter')) continue;
+        if (remoteJid.endsWith('@g.us') && !config.replyInGroups) continue;
+        if (this._alreadySeen(msg.key.id)) continue;
 
-      const remoteJid = msg.key.remoteJid;
-      // Ignorar broadcasts y estados de WhatsApp
-      if (!remoteJid || remoteJid.includes('@broadcast') || remoteJid.includes('newsletter')) continue;
-
-      // Extraer el texto del mensaje
-      const text = this._extractMessageText(msg);
-      if (!text) continue;
-
-      // Obtener número limpio (ej. 50371234567)
-      const senderPhone = remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '');
-      console.log(`[WhatsAppSession] 💬 Mensaje de +${senderPhone}: "${text}"`);
-
-      // Enviar al Asistente Operativo en Python
-      const aiResponse = await forwardToPythonBackend(senderPhone, text);
-
-      if (aiResponse && aiResponse.reply && aiResponse.reply.trim().length > 0 && !aiResponse.human_handoff_active) {
-        console.log(`[WhatsAppSession] 🤖 Respondiendo a +${senderPhone}...`);
-        await this.sendMessage(remoteJid, aiResponse.reply);
-
-        if (aiResponse.transferred_to_human) {
-          console.log(`[WhatsAppSession] 👨‍💼 Caso transferido a un humano para +${senderPhone}`);
+        // Tras una caída larga, WhatsApp entrega mensajes viejos: no contestar conversaciones ya frías
+        const ts = Number(msg.messageTimestamp?.toNumber?.() ?? msg.messageTimestamp ?? 0) * 1000;
+        if (ts && Date.now() - ts > config.maxMessageAgeMs) {
+          console.log(`[WhatsAppSession:${this.tenantId}] Mensaje antiguo de ${remoteJid} ignorado.`);
+          continue;
         }
-      } else if (aiResponse && (aiResponse.human_handoff_active || !aiResponse.reply)) {
-        console.log(`[WhatsAppSession] ⏸️ [Silencio] Conversación con +${senderPhone} derivada a humano. La IA permanece en silencio.`);
+
+        this._enqueue(remoteJid, () => this._processMessage(msg));
+      } catch (e) {
+        console.error(`[WhatsAppSession:${this.tenantId}] Error clasificando mensaje entrante:`, e.message);
       }
     }
   }
 
-  /**
-   * Extrae el texto legible del mensaje soportando varios tipos de payload de Baileys
-   */
-  _extractMessageText(msg) {
-    const message = msg.message;
-    if (!message) return null;
-
-    if (message.conversation) {
-      return message.conversation.trim();
+  /** Teléfono del remitente. Con direcciones LID (@lid) WhatsApp oculta el número; se usa el alternativo si viene. */
+  _senderId(msg) {
+    const key = msg.key;
+    let jid = key.remoteJid;
+    if (jid.endsWith('@lid')) {
+      jid = key.senderPn || key.remoteJidAlt || jid;
     }
-    if (message.extendedTextMessage?.text) {
-      return message.extendedTextMessage.text.trim();
+    if (jid.endsWith('@g.us')) {
+      jid = key.participant || jid;
     }
-    if (message.imageMessage?.caption) {
-      return message.imageMessage.caption.trim();
-    }
-    if (message.videoMessage?.caption) {
-      return message.videoMessage.caption.trim();
-    }
-    return null;
+    return jid.split('@')[0].split(':')[0];
   }
 
-  /**
-   * Envía un mensaje de texto a un destinatario
-   * @param {string} to - Número de teléfono (con o sin @s.whatsapp.net)
-   * @param {string} text - Contenido del mensaje
-   */
-  async sendMessage(to, text) {
-    if (!this.sock || this.status !== 'CONNECTED') {
-      throw new Error(`No se puede enviar mensaje: WhatsApp no está conectado (Estado actual: ${this.status})`);
+  async _processMessage(msg) {
+    const remoteJid = msg.key.remoteJid;
+    const senderPhone = this._senderId(msg);
+    const text = this._extractMessageText(msg) || '';
+
+    const rawMessage = msg.message || {};
+    const unwrapped =
+      rawMessage.ephemeralMessage?.message ||
+      rawMessage.viewOnceMessage?.message ||
+      rawMessage.viewOnceMessageV2?.message ||
+      rawMessage.documentWithCaptionMessage?.message ||
+      rawMessage;
+
+    const mediaPayload = {};
+    await this._attachMedia(msg, unwrapped.audioMessage, 'audio', mediaPayload);
+    await this._attachMedia(msg, unwrapped.imageMessage, 'image', mediaPayload);
+
+    // Reacciones, stickers, mensajes de protocolo, etc.: nada que responder
+    if (!text && !mediaPayload.audioBase64 && !mediaPayload.imageBase64) return;
+
+    const aiResponse = await forwardToPythonBackend(
+      senderPhone,
+      text,
+      { ...mediaPayload, contactName: msg.pushName || null },
+      this.tenantId
+    );
+
+    if (!aiResponse) return; // el bridge ya registró el error
+    if (aiResponse.human_handoff_active || !aiResponse.reply || !aiResponse.reply.trim()) {
+      console.log(`[WhatsAppSession:${this.tenantId}] ⏸️ [Silencio] Sin respuesta automática para +${senderPhone}.`);
+      return;
     }
-
-    // Normalizar JID
-    let jid = to;
-    if (!jid.includes('@')) {
-      const cleanDigits = jid.replace(/\D/g, '');
-      jid = `${cleanDigits}@s.whatsapp.net`;
-    }
-
-    const result = await this.sock.sendMessage(jid, { text });
-    return result;
-  }
-
-  /**
-   * Asigna una etiqueta de WhatsApp Business al chat del cliente.
-   * @param {string} to - Número de teléfono o JID
-   * @param {string} tagName - Nombre de la etiqueta (ej: COTIZACIÓN, ECOMMERCE, AUTOMATIZACIÓN)
-   * @param {number} [colorId] - Código de color opcional (0-19)
-   */
-  async addChatLabel(to, tagName, colorId = null) {
-    if (!this.sock || this.status !== 'CONNECTED') {
-      console.warn(`[WhatsAppSession] No se puede asignar etiqueta: WhatsApp no está conectado (${this.status})`);
-      return false;
-    }
-
-    // Normalizar JID
-    let jid = to;
-    if (!jid.includes('@')) {
-      const cleanDigits = jid.replace(/\D/g, '');
-      jid = `${cleanDigits}@s.whatsapp.net`;
-    }
-
-    const WA_BUSINESS_LABELS = {
-      'COTIZACIÓN': { id: '101', name: 'COTIZACIÓN', color: 4 },
-      'COTIZACION': { id: '101', name: 'COTIZACIÓN', color: 4 },
-      'ECOMMERCE': { id: '102', name: 'ECOMMERCE', color: 1 },
-      'AUTOMATIZACIÓN': { id: '103', name: 'AUTOMATIZACIÓN', color: 2 },
-      'AUTOMATIZACION': { id: '103', name: 'AUTOMATIZACIÓN', color: 2 },
-      'DESARROLLO WEB': { id: '104', name: 'DESARROLLO WEB', color: 5 },
-      'VENTAS': { id: '105', name: 'VENTAS', color: 0 },
-      'SOPORTE TÉCNICO': { id: '106', name: 'SOPORTE TÉCNICO', color: 3 },
-      'SOPORTE TECNICO': { id: '106', name: 'SOPORTE TÉCNICO', color: 3 },
-      'RECLAMO': { id: '107', name: 'RECLAMO', color: 7 },
-      'URGENTE': { id: '108', name: 'URGENTE', color: 8 },
-      'CONSULTA GENERAL': { id: '109', name: 'CONSULTA GENERAL', color: 9 },
-      'ATENCIÓN HUMANA': { id: '110', name: 'ATENCIÓN HUMANA', color: 6 },
-      'ATENCION HUMANA': { id: '110', name: 'ATENCIÓN HUMANA', color: 6 }
-    };
-
-    const cleanTag = (tagName || 'ATENCIÓN HUMANA').trim().toUpperCase();
-    const preset = WA_BUSINESS_LABELS[cleanTag] || {
-      id: String(Math.abs(cleanTag.split('').reduce((acc, c) => ((acc << 5) - acc) + c.charCodeAt(0), 0)) % 1000 + 200),
-      name: cleanTag,
-      color: colorId !== null ? colorId : 4
-    };
 
     try {
-      // 1. Asegurar que la etiqueta existe o se actualiza en WhatsApp Business
-      if (typeof this.sock.addLabel === 'function') {
-        try {
-          await this.sock.addLabel('', {
-            id: preset.id,
-            name: preset.name,
-            color: preset.color,
-            deleted: false
-          });
-        } catch (labelErr) {
-          // Continuar si la etiqueta ya estaba registrada
-        }
+      console.log(`[WhatsAppSession:${this.tenantId}] 🤖 Respondiendo a +${senderPhone}...`);
+      await this.sendMessage(remoteJid, aiResponse.reply);
+      if (aiResponse.transferred_to_human) {
+        console.log(`[WhatsAppSession:${this.tenantId}] 👨‍💼 Caso transferido a un humano para +${senderPhone}`);
       }
-
-      // 2. Asociar la etiqueta al chat de WhatsApp Business
-      if (typeof this.sock.addChatLabel === 'function') {
-        await this.sock.addChatLabel(jid, preset.id);
-        console.log(`[WhatsAppSession] 🏷️ Etiqueta "${preset.name}" (ID ${preset.id}) sincronizada en WhatsApp Business para ${jid}`);
-        return true;
-      } else {
-        console.warn('[WhatsAppSession] El socket no expone addChatLabel');
-        return false;
-      }
-    } catch (err) {
-      console.warn(`[WhatsAppSession] Error asignando etiqueta "${cleanTag}" a ${jid}:`, err.message);
-      return false;
+    } catch (e) {
+      console.error(`[WhatsAppSession:${this.tenantId}] No se pudo enviar la respuesta a +${senderPhone}:`, e.message);
     }
   }
 
-  /**
-   * Cierre voluntario de sesión y limpieza
-   */
+  async _attachMedia(msg, mediaMsg, kind, payload) {
+    if (!mediaMsg) return;
+    const size = Number(mediaMsg.fileLength?.toNumber?.() ?? mediaMsg.fileLength ?? 0);
+    if (size && size > config.maxMediaBytes) {
+      console.warn(`[WhatsAppSession:${this.tenantId}] ${kind} de ${size} bytes ignorado (máximo ${config.maxMediaBytes}).`);
+      return;
+    }
+    try {
+      const buffer = await downloadMediaMessage(msg, 'buffer', {}, {
+        logger: this.logger,
+        reuploadRequest: this.sock?.updateMediaMessage
+      });
+      payload[`${kind}Base64`] = buffer.toString('base64');
+      payload[`${kind}MimeType`] = mediaMsg.mimetype || (kind === 'audio' ? 'audio/ogg; codecs=opus' : 'image/jpeg');
+    } catch (e) {
+      console.error(`[WhatsAppSession:${this.tenantId}] Error descargando ${kind}:`, e.message);
+    }
+  }
+
+  _extractMessageText(msg) {
+    const m = msg.message;
+    if (!m) return null;
+    const inner =
+      m.ephemeralMessage?.message ||
+      m.viewOnceMessage?.message ||
+      m.viewOnceMessageV2?.message ||
+      m.documentWithCaptionMessage?.message ||
+      m;
+    const text =
+      inner.conversation ||
+      inner.extendedTextMessage?.text ||
+      inner.imageMessage?.caption ||
+      inner.videoMessage?.caption ||
+      inner.documentMessage?.caption ||
+      inner.buttonsResponseMessage?.selectedDisplayText ||
+      inner.listResponseMessage?.title ||
+      null;
+    return text ? text.trim() : null;
+  }
+
+  // ---------------- Salida ----------------
+
+  _toJid(to) {
+    if (to.includes('@')) return to;
+    return `${to.replace(/\D/g, '')}@s.whatsapp.net`;
+  }
+
+  async sendMessage(to, text) {
+    if (!this.sock || this.status !== 'CONNECTED') {
+      const err = new Error(`WhatsApp no está conectado para la empresa [${this.tenantId}] (Estado: ${this.status})`);
+      err.status = 503;
+      throw err;
+    }
+    return await this.sock.sendMessage(this._toJid(to), { text });
+  }
+
+  async addChatLabel(to, tagName, colorId = null) {
+    if (!this.sock || this.status !== 'CONNECTED') return false;
+    const jid = this._toJid(to);
+    try {
+      if (typeof this.sock.addChatLabel === 'function') {
+        await this.sock.addChatLabel(jid, '110');
+        return true;
+      }
+    } catch (err) {
+      console.warn(`[WhatsAppSession:${this.tenantId}] Error asignando etiqueta a ${jid}:`, err.message);
+    }
+    return false;
+  }
+
+  /** Desvincula el teléfono, borra las credenciales y prepara un QR nuevo. */
   async logout() {
-    if (this.sock) {
+    const sock = this.sock;
+    this.reconnection.cancel();
+    // Sin listeners: el cierre provocado por logout no debe disparar otra reconexión en paralelo
+    if (sock) {
       try {
-        await this.sock.logout();
+        sock.ev.removeAllListeners('connection.update');
+        await sock.logout();
       } catch (err) {
-        console.error('[WhatsAppSession] Error durante logout:', err.message);
+        console.error(`[WhatsAppSession:${this.tenantId}] Error durante logout:`, err.message);
       }
     }
-    reconnection.cleanAuthDirectory(config.authFolder);
+    this._teardownSocket();
+    this.reconnection.cleanAuthDirectory(this.authFolder);
+    this.reconnection.reset();
     this.status = 'DISCONNECTED';
+    this.stopReason = null;
     this.user = null;
+    this.authState = null;
+    this.connectedAt = null;
     this.qrString = null;
     this.qrDataUrl = null;
-    console.log('[WhatsAppSession] Sesión cerrada y credenciales eliminadas.');
+    console.log(`[WhatsAppSession:${this.tenantId}] Sesión cerrada y credenciales eliminadas.`);
+
+    // Nuevo QR listo para vincular otro teléfono
+    this.lastQrRequestAt = Date.now();
+    this.reconnection.scheduleReconnect(1000, () => this.initSession());
+  }
+
+  /** Apagado del proceso: cierra el socket SIN desvincular el teléfono. */
+  shutdown() {
+    this.shuttingDown = true;
+    this.reconnection.cancel();
+    this._teardownSocket();
   }
 }
 
-module.exports = new WhatsAppSession();
+/**
+ * Gestor multi-empresa de sesiones de WhatsApp.
+ */
+class SessionManager {
+  constructor() {
+    this.sessions = new Map();
+  }
+
+  has(tenantId) {
+    return this.sessions.has(normalizeTenant(tenantId));
+  }
+
+  /**
+   * Devuelve la sesión de la empresa; la crea solo si create = true.
+   * Lanza error si el identificador es inválido (evita rutas fuera de la carpeta de credenciales).
+   */
+  getSession(tenantId = 'default', { create = true } = {}) {
+    const slug = normalizeTenant(tenantId);
+    if (!isValidTenant(slug)) {
+      const err = new Error('Identificador de empresa inválido.');
+      err.status = 400;
+      throw err;
+    }
+    let session = this.sessions.get(slug);
+    if (!session) {
+      if (!create) return null;
+      if (this.sessions.size >= config.maxSessions) {
+        const err = new Error('Se alcanzó el máximo de sesiones de WhatsApp en este gateway.');
+        err.status = 503;
+        throw err;
+      }
+      console.log(`[SessionManager] Creando sesión Baileys para empresa: [${slug}]`);
+      session = new WhatsAppSession(slug);
+      this.sessions.set(slug, session);
+      session.initSession();
+    }
+    return session;
+  }
+
+  initDefault() {
+    return this.getSession(config.tenantId || 'default');
+  }
+
+  /**
+   * Al arrancar, reabre las sesiones de todas las empresas que ya estaban vinculadas.
+   * Antes solo se abría la principal y las demás quedaban sin responder hasta que alguien abría su panel.
+   */
+  restoreAll() {
+    this.initDefault();
+    const tenantsDir = path.join(config.authFolder, 'tenants');
+    let entries = [];
+    try {
+      entries = fs.readdirSync(tenantsDir, { withFileTypes: true });
+    } catch (e) {
+      return; // no hay empresas adicionales
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory() || !isValidTenant(entry.name)) continue;
+      if (!fs.existsSync(path.join(tenantsDir, entry.name, 'creds.json'))) continue;
+      try {
+        this.getSession(entry.name);
+      } catch (e) {
+        console.error(`[SessionManager] No se pudo restaurar la sesión de [${entry.name}]:`, e.message);
+      }
+    }
+  }
+
+  shutdownAll() {
+    for (const session of this.sessions.values()) {
+      session.shutdown();
+    }
+  }
+
+  // Métodos de compatibilidad directa
+  getStatus(tenantId = 'default') {
+    return this.getSession(tenantId).getStatus();
+  }
+
+  getQrData(tenantId = 'default') {
+    return this.getSession(tenantId).getQrData();
+  }
+
+  sendMessage(to, text, tenantId = 'default') {
+    return this.getSession(tenantId).sendMessage(to, text);
+  }
+
+  addChatLabel(to, tagName, colorId = null, tenantId = 'default') {
+    return this.getSession(tenantId).addChatLabel(to, tagName, colorId);
+  }
+
+  logout(tenantId = 'default') {
+    return this.getSession(tenantId).logout();
+  }
+}
+
+const sessionManager = new SessionManager();
+module.exports = sessionManager;
+module.exports.WhatsAppSession = WhatsAppSession;
+module.exports.SessionManager = SessionManager;
+module.exports.normalizeTenant = normalizeTenant;
+module.exports.isValidTenant = isValidTenant;

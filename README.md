@@ -145,6 +145,26 @@ npm start
 
 ---
 
+## 🏢 Multi-empresa (Multi-tenant)
+
+Una sola instalación puede atender a **varias empresas**, cada una totalmente aislada:
+
+| Qué | Cómo se aísla |
+|---|---|
+| Datos (conocimiento, clientes, chats, métricas, módulos, finanzas, restaurante…) | Una base SQLite por empresa (`backend-python/data/tenants/<empresa>.sqlite`) o un **esquema PostgreSQL** por empresa (`t_<empresa>`) |
+| Ajustes (marca, claves de IA, canal de WhatsApp/Meta) | En la base de cada empresa. Una empresa nueva **no hereda** logo, teléfonos, tokens de Meta ni URL de gateway de otra |
+| Acceso | Cada empresa tiene su propia contraseña; el token del panel lleva la empresa y no puede cambiarla |
+| WhatsApp (Baileys) | Un gateway por número: define `TENANT_ID=<empresa>` en ese gateway (ver ejemplo comentado en `docker-compose.yml`) |
+| WhatsApp (Meta Cloud API) | Webhook `/webhook/meta/<empresa>` (o `/webhook/meta`, que enruta por `phone_number_id`); la firma se valida con el App Secret de esa empresa |
+
+**La empresa `default` es la principal**: conserva tu base de datos actual (no hay migración), entra con `ADMIN_PASSWORD` y es la **administradora de la plataforma**.
+
+**Crear una empresa:** inicia sesión sin indicar empresa → *Configuración → Empresas* → *Nueva empresa*. Después cada empresa entra en el panel escribiendo su identificador y contraseña (o con `http://localhost:5173/?empresa=mi-empresa`). El botón *Administrar* te permite operar una empresa como superadmin sin conocer su contraseña.
+
+**API** (solo superadmin): `GET/POST /api/tenants`, `PATCH /api/tenants/{slug}` (nombre, contraseña, activar/desactivar). El gateway y las integraciones internas indican la empresa con el header `X-Tenant-Id` junto a `X-Internal-Key`.
+
+Notas: los módulos (Restaurante, Finanzas) se instalan por empresa; desactivar una empresa conserva sus datos; los documentos de `backend-python/knowledge/` pertenecen solo a la empresa principal.
+
 ## 📡 Endpoints del Sistema
 
 | Servicio | Método | Ruta | Descripción |

@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from services.db_service import db_service
+from services.tenant_service import DEFAULT_TENANT, current_tenant
 from services.scraper_service import scraper_service
 
 logger = logging.getLogger("asistente_operativo.knowledge")
@@ -17,9 +18,24 @@ class KnowledgeService:
             self.knowledge_dir = knowledge_dir
 
         # In-Memory Hot Cache para latencia ultra-baja (0 ms) al responder en WhatsApp
-        self._hot_cache: Optional[str] = None
-        self._cache_timestamp: float = 0
+        self._caches: Dict[str, Dict[str, Any]] = {}  # por empresa: {"text": str|None, "ts": float}
         self.refresh_cache()
+
+    @property
+    def _hot_cache(self) -> Optional[str]:
+        return self._caches.get(current_tenant(), {}).get("text")
+
+    @_hot_cache.setter
+    def _hot_cache(self, value: Optional[str]) -> None:
+        self._caches.setdefault(current_tenant(), {"text": None, "ts": 0})["text"] = value
+
+    @property
+    def _cache_timestamp(self) -> float:
+        return self._caches.get(current_tenant(), {}).get("ts", 0)
+
+    @_cache_timestamp.setter
+    def _cache_timestamp(self, value: float) -> None:
+        self._caches.setdefault(current_tenant(), {"text": None, "ts": 0})["ts"] = value
 
     def refresh_cache(self) -> str:
         """
@@ -29,8 +45,9 @@ class KnowledgeService:
         t0 = time.perf_counter()
         context_parts = []
 
-        # 1. Cargar archivos base del catálogo (JSON, Markdown)
-        if self.knowledge_dir.exists():
+        # 1. Cargar archivos base del catálogo (JSON, Markdown). Son de la empresa principal: otras empresas
+        #    no deben heredar documentos ajenos, solo su propio conocimiento en base de datos.
+        if current_tenant() == DEFAULT_TENANT and self.knowledge_dir.exists():
             for file_path in sorted(self.knowledge_dir.glob("*.*")):
                 if file_path.suffix.lower() in [".json", ".md", ".txt"]:
                     try:
@@ -44,8 +61,19 @@ class KnowledgeService:
 
         # 2. Cargar documentos, sitios web y textos ingresados desde la Base de Datos
         try:
+            from modules.registry import module_registry
+            restaurant_active = module_registry.is_loaded("restaurant")
+        except Exception:
+            restaurant_active = False
+
+        try:
             db_items = db_service.get_all_items()
             for item in db_items:
+                # Si el módulo restaurante está activo, el catálogo oficial del restaurante gobierna el menú;
+                # se omiten notas antiguas de categoría 'menu' para evitar alucinaciones de platos inexistentes.
+                if restaurant_active and item.get("category") == "menu":
+                    continue
+
                 source_info = f"Fuente: {item.get('source_type', 'texto').upper()}"
                 if item.get("source_url"):
                     source_info += f" ({item['source_url']})"
@@ -56,7 +84,6 @@ class KnowledgeService:
                 )
         except Exception as e:
             logger.error(f"Error cargando conocimiento desde BD: {e}")
-
         if not context_parts:
             self._hot_cache = "Base de conocimiento vacía."
         else:

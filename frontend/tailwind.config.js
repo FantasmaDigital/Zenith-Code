@@ -20,12 +20,12 @@ export default {
           700: '#047857',
         },
         dark: {
-          bg: '#0c0d12',
-          sidebar: '#111218',
-          card: '#151720',
-          hover: '#191c27',
-          border: '#1f2330',
-          input: '#0e1017',
+          bg: '#121212',
+          sidebar: '#171717',
+          card: '#1c1c1c',
+          hover: '#232323',
+          border: '#2e2e2e',
+          input: '#141414',
         }
       },
       fontFamily: {

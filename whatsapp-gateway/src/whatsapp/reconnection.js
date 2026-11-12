@@ -4,15 +4,29 @@ const { DisconnectReason } = require('@whiskeysockets/baileys');
 const { Boom } = require('@hapi/boom');
 const config = require('../config');
 
+// Cuántas veces seguidas se tolera un código antes de tomar la medida drástica
+const BAD_SESSION_TOLERANCE = 3;      // 500: recién a la 3.ª vez se borran las credenciales
+const REPLACED_TOLERANCE = 3;         // 440: otra instancia usa la misma sesión; tras 3 se detiene
+
 class ReconnectionManager {
   constructor() {
     this.attempt = 0;
     this.isReconnecting = false;
     this.reconnectTimer = null;
+    this.badSessionCount = 0;
+    this.replacedCount = 0;
   }
 
+  /** Conexión abierta con éxito: se reinician todos los contadores. */
   reset() {
     this.attempt = 0;
+    this.badSessionCount = 0;
+    this.replacedCount = 0;
+    this.cancel();
+  }
+
+  /** Cancela una reconexión programada (logout, apagado, reinicio manual). */
+  cancel() {
     this.isReconnecting = false;
     if (this.reconnectTimer) {
       clearTimeout(this.reconnectTimer);
@@ -21,24 +35,28 @@ class ReconnectionManager {
   }
 
   /**
-   * Determina si la desconexión requiere regenerar credenciales (loggedOut)
-   * o una reconexión automática (red caída, timeout, restart requerido).
+   * Decide qué hacer ante un cierre de conexión.
    * @param {any} lastDisconnect - Error del evento connection.update
-   * @returns {{ shouldCleanAuth: boolean, delayMs: number, reason: string }}
+   * @returns {{ shouldCleanAuth: boolean, delayMs: number, reason: string, stop: boolean, statusCode: number|undefined }}
+   *   stop = true: no reconectar automáticamente (requiere acción humana).
    */
   evaluateDisconnect(lastDisconnect) {
     const error = lastDisconnect?.error;
-    const statusCode = error instanceof Boom 
-      ? error.output?.statusCode 
+    const statusCode = error instanceof Boom
+      ? error.output?.statusCode
       : error?.output?.statusCode;
 
     let shouldCleanAuth = false;
+    let stop = false;
     let delayMs = config.reconnect.initialDelayMs;
     let reason = `Status code: ${statusCode || 'Desconocido'}`;
 
+    if (statusCode !== DisconnectReason.badSession) this.badSessionCount = 0;
+    if (statusCode !== DisconnectReason.connectionReplaced) this.replacedCount = 0;
+
     switch (statusCode) {
       case DisconnectReason.loggedOut:
-        reason = 'Sesión cerrada explícitamente en el teléfono (Logged out). Se requiere nuevo QR.';
+        reason = 'Sesión cerrada desde el teléfono (Logged out). Se requiere nuevo QR.';
         shouldCleanAuth = true;
         delayMs = 1000;
         break;
@@ -48,13 +66,8 @@ class ReconnectionManager {
         delayMs = 500;
         break;
 
-      case DisconnectReason.timedOut:
-        reason = 'Tiempo de espera agotado (Timed out - posible pérdida de internet o batería en teléfono).';
-        delayMs = this._calculateBackoffDelay();
-        break;
-
-      case DisconnectReason.connectionLost:
-        reason = 'Conexión perdida con los servidores de WhatsApp.';
+      case DisconnectReason.timedOut: // 408: también es el código de «QR expirado»
+        reason = 'Tiempo de espera agotado (sin internet, teléfono apagado o QR no escaneado).';
         delayMs = this._calculateBackoffDelay();
         break;
 
@@ -64,48 +77,74 @@ class ReconnectionManager {
         break;
 
       case DisconnectReason.badSession:
-        reason = 'Archivo de sesión corrupto o dañado. Limpiando credenciales para nuevo QR.';
+        // Un 500 puede ser transitorio: borrar credenciales a la primera obliga a re-escanear sin necesidad.
+        this.badSessionCount += 1;
+        if (this.badSessionCount >= BAD_SESSION_TOLERANCE) {
+          reason = `Sesión dañada (${this.badSessionCount} veces seguidas). Limpiando credenciales para nuevo QR.`;
+          shouldCleanAuth = true;
+          this.badSessionCount = 0;
+          delayMs = 1000;
+        } else {
+          reason = `Error de sesión (500), intento ${this.badSessionCount}/${BAD_SESSION_TOLERANCE} antes de pedir nuevo QR.`;
+          delayMs = this._calculateBackoffDelay();
+        }
+        break;
+
+      case DisconnectReason.connectionReplaced:
+        // Otra instancia (u otro despliegue) abrió la misma sesión: reconectar sin pausa provoca una pelea infinita.
+        this.replacedCount += 1;
+        if (this.replacedCount >= REPLACED_TOLERANCE) {
+          reason = 'Conexión reemplazada repetidamente por otra instancia con la misma sesión. Reconexión automática detenida.';
+          stop = true;
+        } else {
+          reason = `Conexión reemplazada por otra sesión (${this.replacedCount}/${REPLACED_TOLERANCE}). Reintentando en 60 s.`;
+          delayMs = 60000;
+        }
+        break;
+
+      case DisconnectReason.forbidden:
+        reason = 'WhatsApp rechazó la cuenta (403: número bloqueado o restringido). Reconexión automática detenida.';
+        stop = true;
+        break;
+
+      case DisconnectReason.multideviceMismatch:
+        reason = 'Incompatibilidad multi-dispositivo (411). Se requiere vincular de nuevo.';
         shouldCleanAuth = true;
         delayMs = 1000;
         break;
 
-      case DisconnectReason.connectionReplaced:
-        reason = 'Conexión reemplazada por otra sesión activa de WhatsApp Web.';
-        delayMs = 5000;
-        break;
-
       default:
-        reason = `Desconexión inesperada: ${error?.message || 'Sin detalle'}`;
+        reason = `Desconexión inesperada (${statusCode || 's/c'}): ${error?.message || 'Sin detalle'}`;
         delayMs = this._calculateBackoffDelay();
         break;
     }
 
-    return { shouldCleanAuth, delayMs, reason };
+    return { shouldCleanAuth, delayMs, reason, stop, statusCode };
   }
 
   /**
-   * Calcula el tiempo de espera con backoff exponencial y jitter aleatorio
+   * Backoff exponencial con jitter: base * 1.5^intento + 0-1000 ms, con tope en maxDelayMs.
    */
   _calculateBackoffDelay() {
     this.attempt += 1;
     const base = config.reconnect.initialDelayMs;
     const max = config.reconnect.maxDelayMs;
-    // Backoff exponencial: base * 1.5^(attempt) + jitter aleatorio (0-1000ms)
     const exponential = Math.min(base * Math.pow(1.5, this.attempt), max);
     const jitter = Math.floor(Math.random() * 1000);
     return Math.min(exponential + jitter, max);
   }
 
   /**
-   * Elimina de forma segura los archivos de credenciales corruptos dentro de la carpeta.
+   * Elimina los archivos de credenciales dentro de la carpeta.
    * No borra el directorio raíz para evitar errores EBUSY en volúmenes Docker.
    */
   cleanAuthDirectory(authFolder) {
     try {
       if (fs.existsSync(authFolder)) {
         console.warn(`[ReconnectionManager] Limpiando archivos de credenciales en: ${authFolder}`);
-        const files = fs.readdirSync(authFolder);
-        for (const file of files) {
+        for (const file of fs.readdirSync(authFolder)) {
+          // La carpeta raíz (empresa «default») contiene las carpetas de las demás empresas: nunca tocarlas.
+          if (file === 'tenants') continue;
           const filePath = path.join(authFolder, file);
           try {
             fs.rmSync(filePath, { recursive: true, force: true });
@@ -121,7 +160,7 @@ class ReconnectionManager {
   }
 
   /**
-   * Programa la reconexión automática infinita
+   * Programa una reconexión. Si ya hay una programada, se respeta la existente.
    */
   scheduleReconnect(delayMs, reconnectCallback) {
     if (this.isReconnecting) {
@@ -136,16 +175,18 @@ class ReconnectionManager {
     }
 
     this.reconnectTimer = setTimeout(async () => {
+      this.reconnectTimer = null;
       this.isReconnecting = false;
       try {
         await reconnectCallback();
       } catch (err) {
         console.error('[ReconnectionManager] Error ejecutando callback de reconexión:', err.message);
-        // Continuar el ciclo infinito ante cualquier fallo
         this.scheduleReconnect(this._calculateBackoffDelay(), reconnectCallback);
       }
     }, delayMs);
   }
 }
 
-module.exports = new ReconnectionManager();
+const defaultManager = new ReconnectionManager();
+defaultManager.ReconnectionManager = ReconnectionManager;
+module.exports = defaultManager;

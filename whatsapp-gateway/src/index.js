@@ -1,3 +1,4 @@
+const crypto = require('crypto');
 const express = require('express');
 const config = require('./config');
 const session = require('./whatsapp/session');
@@ -6,26 +7,88 @@ const app = express();
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// CORS Middleware
+if (!config.internalApiKey) {
+  console.error('[WhatsAppGateway] ❌ INTERNAL_API_KEY no está configurada: el backend no podrá usar el gateway.');
+}
+
+function safeEqual(a, b) {
+  const bufA = Buffer.from(String(a || ''));
+  const bufB = Buffer.from(String(b || ''));
+  return bufA.length > 0 && bufA.length === bufB.length && crypto.timingSafeEqual(bufA, bufB);
+}
+
+// Autenticación: el backend usa X-Internal-Key; una persona en el navegador (/qr) usa
+// HTTP Basic con la contraseña del panel (ADMIN_PASSWORD). Sin CORS: nadie debe llamarlo desde otro sitio.
+// La página del QR y su estado son de solo lectura y se abren sin credenciales; el puerto solo escucha en 127.0.0.1.
+const PUBLIC_READ_PATHS = new Set(['/', '/qr', '/api/qr', '/api/status', '/health']);
 app.use((req, res, next) => {
-  res.header('Access-Control-Allow-Origin', '*');
-  res.header('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization, Accept');
-  if (req.method === 'OPTIONS') {
-    return res.sendStatus(200);
+  // req.trusted: la petición trae credenciales válidas (puede crear sesiones de otras empresas)
+  req.trusted = Boolean(config.internalApiKey && safeEqual(req.get('X-Internal-Key'), config.internalApiKey));
+  if (req.trusted) {
+    return next();
   }
-  next();
+  if (req.method === 'GET' && PUBLIC_READ_PATHS.has(req.path)) {
+    return next();
+  }
+  const basic = (req.get('Authorization') || '').match(/^Basic\s+(.+)$/i);
+  if (basic && config.adminPassword) {
+    const decoded = Buffer.from(basic[1], 'base64').toString('utf8');
+    const password = decoded.slice(decoded.indexOf(':') + 1);
+    if (safeEqual(password, config.adminPassword)) {
+      // El navegador reenvía Basic auth en cualquier petición, incluso desde otro sitio (CSRF):
+      // con Basic solo se permiten lecturas y el botón de desvincular de la propia página /qr.
+      req.trusted = true;
+      if (req.method === 'GET') {
+        return next();
+      }
+      const sameOrigin = req.get('Origin') === `${req.protocol}://${req.get('host')}`;
+      if (req.method === 'POST' && req.path === '/api/logout' && sameOrigin) {
+        return next();
+      }
+      return res.status(403).json({ error: 'Operación no permitida desde el navegador.' });
+    }
+  }
+  res.set('WWW-Authenticate', 'Basic realm="Zenith WhatsApp Gateway", charset="UTF-8"');
+  return res.status(401).json({ error: 'No autorizado.' });
 });
 
 // ==============================================================
+// Helper Multi-Tenant: resuelve la sesión Baileys para la empresa de la petición
+// Sin credenciales solo se consultan sesiones existentes: antes cualquiera podía crear sesiones ilimitadas
+// (carpetas y sockets) con ?tenant=xxx desde las rutas públicas.
+function getSessionForReq(req) {
+  const tenantId = session.normalizeTenant(
+    req.headers['x-tenant-id'] ||
+    req.query.tenant ||
+    req.query.empresa ||
+    config.tenantId ||
+    'default'
+  );
+  const create = req.trusted || tenantId === config.tenantId;
+  const s = session.getSession(tenantId, { create });
+  if (!s) {
+    const err = new Error('No hay una sesión de WhatsApp para esa empresa.');
+    err.status = 404;
+    throw err;
+  }
+  return s;
+}
+
+app.get('/health', (req, res) => {
+  res.json({ status: 'ok', sessions: session.sessions.size });
+});
+
 // RUTAS DE LA API Y MONITOREO
 // ==============================================================
 
-app.get('/', (req, res) => {
+app.get('/', (req, res, next) => {
+  let s;
+  try { s = getSessionForReq(req); } catch (err) { return next(err); }
   res.json({
-    service: 'Zenith WhatsApp Gateway (In-House Baileys)',
-    version: '1.0.0',
-    ...session.getStatus(),
+    service: 'Zenith WhatsApp Gateway (In-House Baileys Multi-Tenant)',
+    version: '2.0.0',
+    tenant: s.tenantId,
+    ...s.getStatus(),
     endpoints: {
       qr_page: '/qr (HTML)',
       qr_api: '/api/qr (JSON)',
@@ -35,13 +98,30 @@ app.get('/', (req, res) => {
   });
 });
 
-app.get('/api/status', (req, res) => {
-  res.json(session.getStatus());
+app.get('/api/status', (req, res, next) => {
+  // ?peek=1: solo consultar (resumen del superadmin); no crea una sesión ni genera QR para empresas sin WhatsApp
+  if (req.query.peek === '1') {
+    try {
+      const tenantId = session.normalizeTenant(req.headers['x-tenant-id'] || req.query.tenant || config.tenantId);
+      const existing = session.getSession(tenantId, { create: false });
+      if (!existing) {
+        return res.json({ status: 'NOT_STARTED', connected: false, user: null, tenant: tenantId });
+      }
+      return res.json({ ...existing.getStatus(), tenant: existing.tenantId });
+    } catch (err) {
+      return next(err);
+    }
+  }
+  let s;
+  try { s = getSessionForReq(req); } catch (err) { return next(err); }
+  res.json({ ...s.getStatus(), tenant: s.tenantId });
 });
 
-app.get('/api/qr', async (req, res) => {
-  const qrData = await session.getQrData();
-  const user = session.user;
+app.get('/api/qr', async (req, res, next) => {
+  let s;
+  try { s = getSessionForReq(req); } catch (err) { return next(err); }
+  const qrData = await s.getQrData();
+  const user = s.user;
   const phoneNumber = user?.id ? user.id.split(':')[0] : null;
   res.json({
     ...qrData,
@@ -53,9 +133,15 @@ app.get('/api/qr', async (req, res) => {
 // ==============================================================
 // INTERFAZ WEB PREMIUM PARA ESCANEAR EL CÓDIGO QR (ESTILO ZENITH STUDIO)
 // ==============================================================
-app.get('/qr', async (req, res) => {
-  const { status, qrDataUrl } = await session.getQrData();
-  const user = session.user;
+app.get('/qr', async (req, res, next) => {
+  let s;
+  try {
+    s = getSessionForReq(req);
+  } catch (err) {
+    return next(err);
+  }
+  const { status, qrDataUrl } = await s.getQrData();
+  const user = s.user;
   const phoneNumber = user?.id ? user.id.split(':')[0] : null;
 
   const html = `<!DOCTYPE html>
@@ -186,12 +272,13 @@ app.get('/qr', async (req, res) => {
     }
     .status-CONNECTING .pill-dot, .status-RECONNECTING .pill-dot { background: #60a5fa; }
 
+    .status-QR_EXPIRED, .status-STOPPED,
     .status-DISCONNECTED {
       background: rgba(244, 63, 94, 0.14);
       color: #fb7185;
       border: 1px solid rgba(244, 63, 94, 0.35);
     }
-    .status-DISCONNECTED .pill-dot { background: #fb7185; }
+    .status-DISCONNECTED .pill-dot, .status-QR_EXPIRED .pill-dot, .status-STOPPED .pill-dot { background: #fb7185; }
 
     .body-content {
       padding: 24px 28px;
@@ -442,12 +529,12 @@ app.get('/qr', async (req, res) => {
             </div>
           </div>
 
-          <a href="http://localhost:5173/whatsapp-gateway" class="btn btn-primary">
+          <a href="${config.panelUrl}/whatsapp-gateway" class="btn btn-primary">
             <span>Abrir en Zenith Studio Dashboard</span>
             <span>→</span>
           </a>
 
-          <form action="/api/logout" method="POST" onsubmit="return confirm('¿Seguro que deseas desvincular el dispositivo de WhatsApp?');">
+          <form action="/api/logout?tenant=${encodeURIComponent(s.tenantId)}" method="POST" onsubmit="return confirm('¿Seguro que deseas desvincular el dispositivo de WhatsApp?');">
             <button type="submit" class="btn btn-danger">
               <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path>
@@ -487,7 +574,7 @@ app.get('/qr', async (req, res) => {
             </div>
           </div>
 
-          <a href="http://localhost:5173/whatsapp-gateway" class="btn btn-secondary">
+          <a href="${config.panelUrl}/whatsapp-gateway" class="btn btn-secondary">
             <span>Ir al Panel Zenith Studio</span>
           </a>
         </div>
@@ -511,7 +598,7 @@ app.get('/qr', async (req, res) => {
     let currentStatus = "${status}";
     setInterval(async () => {
       try {
-        const res = await fetch('/api/qr');
+        const res = await fetch('/api/qr?tenant=${encodeURIComponent(s.tenantId)}');
         if (!res.ok) return;
         const data = await res.json();
         
@@ -546,10 +633,11 @@ app.post('/api/send', async (req, res) => {
   }
 
   try {
-    const result = await session.sendMessage(to, text);
+    const s = getSessionForReq(req);
+    const result = await s.sendMessage(to, text);
     res.json({ success: true, result });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(error.status || 500).json({ success: false, error: error.message });
   }
 });
 
@@ -564,40 +652,64 @@ app.post('/api/chat/label', async (req, res) => {
   }
 
   try {
-    const success = await session.addChatLabel(to, tag, color);
+    const s = getSessionForReq(req);
+    const success = await s.addChatLabel(to, tag, color);
     res.json({ success, to, tag });
   } catch (error) {
-    res.status(500).json({ success: false, error: error.message });
+    res.status(error.status || 500).json({ success: false, error: error.message });
   }
 });
 
 // Desvincular sesión manualmente
 app.post('/api/logout', async (req, res) => {
   try {
-    await session.logout();
+    const s = getSessionForReq(req);
+    await s.logout();
     if (req.headers.accept?.includes('application/json') || req.is('json') || req.xhr) {
       return res.json({ success: true, status: 'DISCONNECTED' });
     }
-    res.redirect('/qr');
+    res.redirect(`/qr?tenant=${encodeURIComponent(s.tenantId)}`);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    res.status(error.status || 500).json({ error: error.message });
   }
 });
 
 // ==============================================================
 // MANEJO ROBUSTO DE EXCEPCIONES Y CICLO DE VIDA DEL PROCESO
 // ==============================================================
-process.on('uncaughtException', (err) => {
-  console.error('[CRITICAL] Excepción no capturada:', err.message, err.stack);
+// Errores de las rutas (JSON inválido, empresa inválida...) como JSON, sin trazas internas
+app.use((err, req, res, next) => {
+  const status = err.status || err.statusCode || 500;
+  if (status >= 500) {
+    console.error('[WhatsAppGateway] Error en', req.method, req.path, '-', err.message);
+  }
+  res.status(status).json({ error: status >= 500 ? 'Error interno del gateway.' : err.message });
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL] Excepción no capturada:', err?.message, err?.stack);
+});
+
+process.on('unhandledRejection', (reason) => {
   console.error('[CRITICAL] Promesa rechazada no manejada:', reason);
 });
 
-// Iniciar servidor HTTP e inicializar socket de Baileys
-app.listen(config.port, config.host, () => {
+// Iniciar servidor HTTP y reabrir las sesiones de WhatsApp ya vinculadas (todas las empresas)
+const server = app.listen(config.port, config.host, () => {
   console.log(`[WhatsAppGateway] 🚀 Servidor HTTP escuchando en http://${config.host}:${config.port}`);
   console.log(`[WhatsAppGateway] 📲 Abre http://localhost:${config.port}/qr para escanear el código QR`);
-  session.initSession();
+  session.restoreAll();
 });
+
+// Apagado ordenado (docker stop / redeploy): cerrar sockets sin desvincular los teléfonos
+let shuttingDown = false;
+function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[WhatsAppGateway] ${signal} recibido: cerrando sesiones...`);
+  session.shutdownAll();
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 5000).unref();
+}
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));

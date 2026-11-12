@@ -69,24 +69,21 @@ def analyze_handoff_intent(messages: List[Dict[str, str]], reason: str = "") -> 
     if not messages:
         return rule_based_fallback(messages, reason)
 
-    # Filtrar últimos 8 mensajes relevantes para dar contexto
-    recent = messages[-8:]
+    # Últimos 8 mensajes, recortados: suficiente para clasificar sin gastar tokens en textos largos
     history_lines = []
-    for m in recent:
-        role = "Cliente" if m.get("role") == "user" else "Asistente IA"
-        history_lines.append(f"{role}: {m.get('content', '').strip()}")
+    for m in messages[-8:]:
+        role = "C" if m.get("role") == "user" else "IA"
+        content = re.sub(r"\s+", " ", m.get("content", "")).strip()
+        history_lines.append(f"{role}: {content[:300]}")
     conversation_str = "\n".join(history_lines)
 
     system_prompt = (
-        "Eres un supervisor de atención al cliente. Tu función es analizar el chat de un cliente "
-        "que fue transferido a un agente humano y generar: "
-        "1) Un 'tag' de clasificación directa: [COTIZACIÓN, ECOMMERCE, AUTOMATIZACIÓN, DESARROLLO WEB, VENTAS, SOPORTE TÉCNICO, RECLAMO, URGENTE, CONSULTA GENERAL, ATENCIÓN HUMANA]. "
-        "2) Una 'note' ejecutiva concisa (1 o 2 oraciones, máximo 35 palabras) que resuma exactamente qué busca el cliente "
-        "y qué necesita, para que el asesor humano no tenga que leer todo el historial del chat.\n\n"
-        "Debes responder EXCLUSIVAMENTE un objeto JSON válido con los campos 'tag' y 'note'."
+        "Clasifica este chat transferido a un asesor. Responde solo JSON {\"tag\",\"note\"}. "
+        f"tag: uno de {', '.join(ALLOWED_TAGS)}. "
+        "note: qué quiere el cliente, máx. 30 palabras."
     )
-
-    prompt = f"{system_prompt}\n\nMotivo de derivación: {reason or 'Solicitud de asesor'}\n\nHistorial del chat:\n{conversation_str}\n\nJSON:"
+    user_prompt = f"Motivo: {reason or 'Solicitud de asesor'}\nChat (C=cliente):\n{conversation_str}"
+    prompt = f"{system_prompt}\n\n{user_prompt}"
 
     # Intentar con Gemini
     try:
@@ -99,8 +96,9 @@ def analyze_handoff_intent(messages: List[Dict[str, str]], reason: str = "") -> 
             client = genai.Client(api_key=api_key)
             config = types.GenerateContentConfig(
                 temperature=0.1,
-                max_output_tokens=200,
-                response_mime_type="application/json"
+                max_output_tokens=150,
+                response_mime_type="application/json",
+                **({"thinking_config": types.ThinkingConfig(thinking_budget=0)} if hasattr(types, "ThinkingConfig") else {})
             )
             response = client.models.generate_content(
                 model=settings.GEMINI_MODEL or "gemini-2.5-flash",
@@ -131,10 +129,10 @@ def analyze_handoff_intent(messages: List[Dict[str, str]], reason: str = "") -> 
                 model=settings.OPENAI_MODEL or "gpt-4o-mini",
                 messages=[
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": prompt}
+                    {"role": "user", "content": user_prompt}
                 ],
                 temperature=0.1,
-                max_tokens=200,
+                max_tokens=150,
                 response_format={"type": "json_object"}
             )
             choice = response.choices[0]
