@@ -61,7 +61,8 @@ def build_prompt_extension() -> str:
     lines.append(f"{extra}Preparación ~{config['prep_minutes']} min.")
     if ai.get("menu_link"):
         lines.append(f"Carta con fotos: {ai['menu_link']}")
-    lines.append(service.get_menu_text(with_ids=True, with_stock=False))
+    lines.append("\n[CATÁLOGO E INVENTARIO OFICIAL DISPONIBLE]")
+    lines.append(service.get_menu_text(with_ids=True, with_stock=True))
     lines.append(_behavior_rules(ai))
     if (ai.get("instructions") or "").strip():
         lines.append("Indicaciones del restaurante:\n" + ai["instructions"].strip())
@@ -74,7 +75,20 @@ def build_live_context() -> str:
     config = service.get_config()
     is_open = service.is_open(config)
     local = service.local_now(config)
-    parts = [f"Restaurante {local.strftime('%H:%M')} " + ("ABIERTO." if is_open else "CERRADO: no tomes pedidos.")]
+    status_str = "ABIERTO." if is_open else "CERRADO: no tomes pedidos."
+    parts = [f"Restaurante {local.strftime('%H:%M')} {status_str}"]
+    hours_info = service.hours_text(config)
+    if hours_info:
+        parts.append(f"Horario oficial vigente: {hours_info}.")
+    available_items = service.list_menu(only_available=True)
+    stock_summary = [f"{i['name']} ({i['stock']} disp.)" for i in available_items if i.get("stock") is not None]
+    if stock_summary:
+        parts.append(f"INVENTARIO EN VIVO (MÁXIMA CERTEZA): {', '.join(stock_summary)}.")
+    cats_with_stock = sorted(list(set(i["category"].strip().title() for i in available_items if i.get("category"))))
+    if cats_with_stock:
+        parts.append(f"Categorías disponibles: {', '.join(cats_with_stock)}.")
+    else:
+        parts.append("Actualmente NO hay productos disponibles en la carta.")
     low = [f"{i['name']} ({i['stock']})" for i in service.list_menu(only_available=True)
            if i["stock"] is not None and i["stock"] <= 5]
     if low:
@@ -84,12 +98,21 @@ def build_live_context() -> str:
 
 def _behavior_rules(ai: Dict[str, Any]) -> str:
     """Reglas de atención según la configuración de IA del restaurante (pestaña Configuración del módulo)."""
-    r = ["\n[CÓMO ATENDER]",
-         "- Ofrece el menú y ayuda a pedir. Solo productos y precios del menú; si no hay algo, sugiere algo parecido."]
+    r = [
+        "\n[CÓMO ATENDER - AGENTE DE RELACIONES Y VENTAS (ARM)]",
+        "- ROL: Eres un Asistente y Gestor de Relaciones (ARM) sumamente certero, empático y profesional.",
+        "- Si el cliente SOLO SALUDA (ej. 'hola', 'buenas', 'buenos días'): saluda de forma cálida, cercana y natural. Pregunta en qué puedes colaborar hoy (por ejemplo ofreciendo ver la carta o tomar un pedido). NUNCA recites productos, precios ni menciones platos agotados en un saludo simple.",
+        "- VERDAD ABSOLUTA DE INVENTARIO: Lees el inventario real en vivo. Todos los productos listados con stock > 0 (como Hamburguesa Angus BBQ con 350 unidades en inventario) TIENEN EXISTENCIAS DISPONIBLES DE SOBRA. JAMÁS digas que están agotados ni inventes que se acabaron.",
+        "- PRODUCTOS NO DISPONIBLES: Si el cliente pregunta por productos que NO están en el menú o que están en stock 0 (como tacos, pizzas, pupusas, etc.), explica cordialmente que por el momento no dispones de ellos y ofrece con total seguridad las opciones que sí tienen stock disponible.",
+    ]
     if ai.get("menu_style") == "full":
-        r.append("- Si piden el menú, muéstralo completo por categoría con precios.")
+        r.append("- Si el cliente pide ver el menú o pregunta qué hay de comer: muéstralo completo organizado por categorías con sus precios y stock disponible.")
     else:
-        r.append("- Si piden el menú, primero da las categorías y pregunta cuál ver; luego sus productos con precio.")
+        r.append(
+            "- CÓMO MOSTRAR EL MENÚ (REGLA: Primero categorías, luego productos):\n"
+            "  * Si el cliente pide ver el menú o pregunta qué hay para comer/tomar: menciona ÚNICAMENTE las categorías disponibles (ej. 'Tenemos: Hamburguesas y Bebidas. ¿Cuál te gustaría ver?'). NO listes los productos específicos ni precios en este paso.\n"
+            "  * Solo cuando el cliente elija o mencione una categoría concreta (ej. 'hamburguesas'): muestra inmediatamente la Hamburguesa Angus BBQ por $14.00, confirmando con entusiasmo que está disponible para preparar con stock en inventario."
+        )
     if ai.get("menu_link"):
         r.append("- Si piden fotos o la carta, comparte el enlace.")
     r.append("- Nunca muestres los [id N].")
@@ -97,8 +120,7 @@ def _behavior_rules(ai: Dict[str, Any]) -> str:
         r.append("- NO tomes pedidos aquí: si quieren pedir, responde con el mensaje oficial de transferencia.")
         return "\n".join(r)
     if ai.get("upsell", True):
-        r.append("- Como buen vendedor: al agregar algo, confírmalo y pregunta si desea algo más sugiriendo UN complemento "
-                 "concreto con precio (ej. \"¿Le agregamos una limonada por $2.50?\"). No insistas si dice que no.")
+        r.append("- Como buen vendedor: al agregar algo, confírmalo y pregunta si desea algo más sugiriendo un complemento o bebida REAL que sí esté en el MENÚ disponible con su precio exacto. No inventes productos. No insistas si dice que no.")
     else:
         r.append("- Al agregar algo, confírmalo y pregunta si desea algo más.")
     name_step = ", 4) nombre" if ai.get("ask_name", True) else ""
@@ -340,9 +362,77 @@ def build_tools() -> list:
     ]
 
 
+def sanitize_menu_hallucinations(session_id: str, reply: str) -> str:
+    """
+    Guardrail programático de producción:
+    1. Si el cliente solo envió un saludo simple (ej. 'hola'), impide que la IA vomite productos o anuncie agotados.
+    2. Si la IA declara erróneamente como 'agotado' un producto que actualmente TIENE STOCK disponible,
+       corrige la contradicción de inmediato antes de enviarse al cliente.
+    """
+    if not reply:
+        return reply
+
+    try:
+        from services.lead_service import lead_service
+        session = lead_service.get_or_create_session(session_id)
+        last_user_msg = ""
+        for m in reversed(session.messages):
+            if m.get("role") == "user":
+                last_user_msg = (m.get("content") or "").strip()
+                break
+
+        # Caso 1: Saludo simple
+        is_greeting = bool(re.fullmatch(
+            r"(?i)\s*(hola+|buen[oa]s?\s*(d[ií]as?|tardes?|noches?)?|hey|qu[eé]\s*tal|saludos?)\s*[!.,]*\s*",
+            last_user_msg
+        ))
+        if is_greeting and ("$" in reply or "agotad" in reply.lower()):
+            # El usuario solo saludó pero la IA intentó vender o dar precios prematuramente
+            c_name = session.customer_name if hasattr(session, "customer_name") and session.customer_name else ""
+            saludo_nom = f", {c_name}" if c_name else ""
+            logger.warning(f"🛡️ Guardrail: Suavizando saludo invasivo para sesión {session_id}.")
+            return f"¡Hola{saludo_nom}! Qué gusto saludarte. ¿En qué te podemos ayudar hoy? Si gustas, con gusto te muestro nuestro menú o te tomo un pedido."
+
+        # Caso 2: Corrección automática e infalible si la IA dice que un ítem con stock está agotado
+        available_items = restaurant_service.list_menu(only_available=True)
+        agotado_pattern = r"(?:se nos ha agotado[^\.\n]*|se nos agotó[^\.\n]*|la tenemos agotada[^\.\n]*|lo tenemos agotado[^\.\n]*|está agotad\w*[^\.\n]*|se encuentra agotad\w*[^\.\n]*|no tenemos disponible[^\.\n]*|no nos queda[^\.\n]*|se terminó[^\.\n]*|se nos terminó[^\.\n]*)"
+
+        for item in available_items:
+            name = item["name"]
+            if name.lower() in reply.lower():
+                pattern = rf"(?:el\s+|la\s+)?{re.escape(name)}[^.!?\n]*{agotado_pattern}"
+                pattern_inv = rf"{agotado_pattern}[^.!?\n]*(?:el\s+|la\s+)?{re.escape(name)}"
+                
+                if re.search(pattern, reply, re.IGNORECASE) or re.search(pattern_inv, reply, re.IGNORECASE):
+                    logger.warning(f"🛡️ Guardrail de Inventario: Corrigiendo falsa declaración de agotado para '{name}' (Stock: {item.get('stock')}).")
+                    reply = re.sub(
+                        pattern,
+                        f"tenemos disponible {name} por {_money(item['price'])}",
+                        reply,
+                        flags=re.IGNORECASE
+                    )
+                    reply = re.sub(
+                        pattern_inv,
+                        f"tenemos disponible {name} por {_money(item['price'])}",
+                        reply,
+                        flags=re.IGNORECASE
+                    )
+    except Exception as e:
+        logger.debug(f"Aviso en sanitize_menu_hallucinations: {e}")
+
+    return reply
+
+
 def process_reply(session_id: str, reply: str) -> str:
-    """Convierte las etiquetas de la IA en acciones reales; nunca deja etiquetas visibles al cliente."""
-    if not reply or "[[" not in reply:
+    """Convierte las etiquetas de la IA en acciones reales y sanitiza contradicciones de menú."""
+    if not reply:
+        return reply
+
+    # 1. Aplicar guardrails deterministas de menú
+    reply = sanitize_menu_hallucinations(session_id, reply)
+
+    # 2. Procesar etiquetas de pedidos y estados
+    if "[[" not in reply:
         return reply
     text = ORDER_TAG.sub(lambda m: "\n\n" + _create_from_tag(session_id, m.group(1)), reply)
     text = STATUS_TAG.sub(lambda m: _status_text(session_id), text)

@@ -140,7 +140,6 @@ input[type="radio"] {
 }
 
 /* Sombras y glow */
-.,
-.\/20 {
+.shadow-\[\#3ecf8e\]\/20 {
   box-shadow: 0 10px 15px -3px rgba(var(--theme-primary-rgb), 0.25) !important;
 }

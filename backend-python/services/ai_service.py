@@ -5,6 +5,7 @@ from services.gemini_service import gemini_service
 from services.openai_service import openai_service
 from services.lead_service import lead_service
 from services.message_formatter import clean_chat_formatting
+from services.prompt_service import guard_reply, sanitize_user_message
 
 logger = logging.getLogger("asistente_operativo.ai_router")
 
@@ -71,6 +72,11 @@ class AIServiceRouter:
         else:
             reply = openai_service.execute_reply(session_id=session_id, user_message=user_message or "[Audio/Imagen]")
         reply = clean_chat_formatting(reply)
+        guarded = guard_reply(reply)
+        if guarded != reply:
+            # el historial debe guardar lo que realmente se envió, no la respuesta bloqueada
+            lead_service.replace_last_assistant_message(session_id, guarded)
+            return guarded
         return self._apply_module_actions(session_id, reply)
 
     @staticmethod
@@ -98,6 +104,7 @@ class AIServiceRouter:
     ) -> str:
         primary = self.primary_provider
         fallback = self.fallback_provider
+        user_message = sanitize_user_message(user_message)
 
         # 1. Intentar con el proveedor principal
         try:

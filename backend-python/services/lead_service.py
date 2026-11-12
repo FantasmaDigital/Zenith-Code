@@ -2,6 +2,7 @@ import logging
 from typing import Dict, List, Optional, Tuple, Any
 from datetime import datetime, timezone
 from pydantic import BaseModel, Field
+from services.tenant_service import TenantDict
 
 logger = logging.getLogger("asistente_operativo.lead_service")
 
@@ -22,7 +23,7 @@ class SessionState(BaseModel):
 class LeadService:
     def __init__(self):
         # Almacenamiento en memoria para sesiones activas (sincronizado con BD)
-        self._sessions: Dict[str, SessionState] = {}
+        self._sessions = TenantDict()  # estado en memoria separado por empresa
 
     def get_or_create_session(self, session_id: str) -> SessionState:
         if session_id not in self._sessions:
@@ -258,7 +259,7 @@ class LeadService:
             return []
 
     def get_all_sessions(self) -> Dict[str, SessionState]:
-        return self._sessions
+        return dict(self._sessions.items())
 
     def reset_session(self, session_id: str):
         if session_id in self._sessions:

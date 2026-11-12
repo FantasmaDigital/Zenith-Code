@@ -42,21 +42,52 @@ def list_menu_items(only_available: bool = Query(False, description="Solo mostra
     return {"items": restaurant_service.list_menu(only_available=only_available)}
 
 
+def _is_inventory_installed() -> bool:
+    try:
+        from modules.registry import module_registry
+        from services.db_service import db_service
+        return "inventory" in module_registry.get_installed(db_service)
+    except Exception:
+        return False
+
+
 @router.post("/menu")
 def add_menu_item(data: MenuItemCreate):
+    if _is_inventory_installed():
+        raise HTTPException(
+            status_code=400,
+            detail="El módulo de Inventario está activo. El catálogo comercial y platillos deben crearse desde Inventario & Insumos para mantener el Kardex y existencias centralizados."
+        )
     return {"status": "created", "item": restaurant_service.add_menu_item(data)}
 
 
 @router.post("/menu/bulk")
 def add_menu_items_bulk(data: MenuBulkCreate):
     """Carga varios productos de una vez (útil para importar el menú completo)."""
+    if _is_inventory_installed():
+        raise HTTPException(
+            status_code=400,
+            detail="El módulo de Inventario está activo. La importación del catálogo debe realizarse desde Inventario & Insumos."
+        )
     items = restaurant_service.add_menu_items_bulk(data.items)
     return {"status": "created", "count": len(items), "items": items}
 
 
 @router.patch("/menu/{item_id}")
 def update_menu_item(item_id: int, data: MenuItemUpdate):
-    item = restaurant_service.update_menu_item(item_id, data)
+    if _is_inventory_installed():
+        # Si inventario está instalado, en restaurante solo se permite pausar/activar disponibilidad diaria
+        fields = data.model_dump(exclude_unset=True)
+        is_only_availability = set(fields.keys()).issubset({"available"})
+        if not is_only_availability:
+            raise HTTPException(
+                status_code=400,
+                detail="El catálogo está administrado por Inventario. El nombre, precio, categoría y stock deben modificarse desde Inventario & Insumos."
+            )
+    try:
+        item = restaurant_service.update_menu_item(item_id, data)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     if item is None:
         raise HTTPException(status_code=404, detail="Ítem de menú no encontrado.")
     return {"status": "updated", "item": item}
@@ -64,6 +95,11 @@ def update_menu_item(item_id: int, data: MenuItemUpdate):
 
 @router.delete("/menu/{item_id}")
 def delete_menu_item(item_id: int):
+    if _is_inventory_installed():
+        raise HTTPException(
+            status_code=400,
+            detail="El módulo de Inventario está activo. Para eliminar o desactivar un platillo, hazlo desde Inventario & Insumos."
+        )
     if not restaurant_service.delete_menu_item(item_id):
         raise HTTPException(status_code=404, detail="Ítem de menú no encontrado.")
     return {"status": "deleted", "id": item_id}

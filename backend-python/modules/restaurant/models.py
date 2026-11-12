@@ -13,6 +13,7 @@ class MenuItemCreate(BaseModel):
     category: str = "General"
     available: bool = True
     stock: Optional[int] = Field(None, ge=0, description="Unidades disponibles; vacío = sin límite")
+    image_url: Optional[str] = Field(default="", max_length=1000)
 
 
 class MenuItemUpdate(BaseModel):
@@ -23,6 +24,7 @@ class MenuItemUpdate(BaseModel):
     category: Optional[str] = None
     available: Optional[bool] = None
     stock: Optional[int] = Field(None, ge=0)
+    image_url: Optional[str] = Field(None, max_length=1000)
 
 
 class MenuBulkCreate(BaseModel):

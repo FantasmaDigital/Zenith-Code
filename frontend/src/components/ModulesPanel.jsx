@@ -13,7 +13,12 @@ import {
   Check,
   Layers,
   ArrowRight,
-  Wallet
+  Wallet,
+  Briefcase,
+  Receipt,
+  Printer,
+  Package,
+  CreditCard
 } from 'lucide-react';
 
 const MODULE_ICONS = {
@@ -22,7 +27,17 @@ const MODULE_ICONS = {
   finance: Wallet,
   wallet: Wallet,
   Wallet: Wallet,
+  services: Briefcase,
+  Briefcase: Briefcase,
+  invoicing: Receipt,
+  Receipt: Receipt,
+  iot_printing: Printer,
+  Printer: Printer,
+  inventory: Package,
+  Package: Package,
   Boxes: Boxes,
+  loyalty: CreditCard,
+  CreditCard: CreditCard,
   Layers: Layers
 };
 
@@ -34,7 +49,8 @@ export default function ModulesPanel({
   installedModules,
   onModulesChange,
   navigateTo,
-  showToast
+  showToast,
+  targetTenant = 'default'
 }) {
   const [modules, setModules] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -131,6 +147,15 @@ export default function ModulesPanel({
         </button>
       </div>
 
+      <div className="flex items-start gap-2 p-3 bg-[#171717] border border-[#2e2e2e] rounded-md text-[13px] text-zinc-300">
+        <ShieldCheck size={15} className="text-emerald-400 shrink-0 mt-0.5" />
+        <span>
+          Gestión exclusiva del administrador de la plataforma. Los cambios se aplican a la empresa{' '}
+          <b className="font-mono text-zinc-100">{targetTenant === 'default' ? 'principal' : targetTenant}</b>
+          {targetTenant === 'default' ? '; para otra empresa, opérala desde «Empresas».' : '.'}
+        </span>
+      </div>
+
       {/* Métricas rápidas */}
       <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
         <div className="p-4 bg-[#171717] border border-[#2e2e2e] rounded-md">
@@ -170,6 +195,12 @@ export default function ModulesPanel({
             const IconComponent = MODULE_ICONS[mod.icon] || MODULE_ICONS[mod.id] || Boxes;
             const isInstalled = Boolean(mod.installed);
             const isBusy = actionLoading === mod.id;
+            const installedIds = modules.filter(m => m.installed).map(m => m.id);
+            const depends = mod.depends || [];
+            const missingParents = depends.filter(d => !installedIds.includes(d));
+            // El plan de la empresa no incluye el producto de este módulo (p. ej. fidelidad sin contratar)
+            const notInPlan = !isInstalled && mod.in_plan === false;
+            const isBlockedByParent = !isInstalled && !notInPlan && missingParents.length > 0;
 
             return (
               <div
@@ -217,7 +248,20 @@ export default function ModulesPanel({
                         {mod.category || 'Módulo'}
                       </span>
                     </div>
-                    <p className="text-xs text-zinc-400 leading-relaxed">
+                    <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
+                      {depends.length > 0 ? (
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 border border-amber-500/30 flex items-center gap-1">
+                          <span>Módulo Hijo</span>
+                          <span className="text-zinc-500">•</span>
+                          <span>Requiere padre: {depends.map(d => modules.find(m => m.id === d)?.name || d).join(', ')}</span>
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-blue-500/10 text-blue-300 border border-blue-500/30">
+                          Módulo Independiente
+                        </span>
+                      )}
+                    </div>
+                    <p className="text-xs text-zinc-400 leading-relaxed pt-0.5">
                       {mod.description}
                     </p>
                   </div>
@@ -264,15 +308,26 @@ export default function ModulesPanel({
                   ) : (
                     <button
                       onClick={() => handleInstall(mod)}
-                      disabled={isBusy}
-                      className="w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-[13px] font-medium text-black hover:brightness-110 transition-all disabled:opacity-50"
-                      style={{ backgroundColor: themeColor }}
+                      disabled={isBusy || isBlockedByParent || notInPlan}
+                      className={`w-full inline-flex items-center justify-center gap-2 px-3 py-2 rounded-md text-[13px] font-medium transition-all disabled:opacity-60 ${
+                        isBlockedByParent || notInPlan
+                          ? 'bg-zinc-800/80 text-zinc-500 border border-zinc-700/50 cursor-not-allowed'
+                          : 'text-black hover:brightness-110'
+                      }`}
+                      style={!isBlockedByParent && !notInPlan ? { backgroundColor: themeColor } : {}}
+                      title={isBlockedByParent ? `Requiere instalar primero su módulo operacional padre: ${missingParents.join(', ')}` : ''}
                     >
                       {isBusy ? (
                         <>
                           <RefreshCw size={14} className="animate-spin" />
                           <span>Instalando tablas y rutas...</span>
                         </>
+                      ) : notInPlan ? (
+                        <span className="text-xs text-zinc-400">No incluido en el plan de esta empresa (Empresas → productos)</span>
+                      ) : isBlockedByParent ? (
+                        <span className="text-xs text-zinc-400">
+                          Requiere módulo padre (${missingParents.map(d => modules.find(m => m.id === d)?.name || d).join(', ')})
+                        </span>
                       ) : (
                         <>
                           <Download size={14} />

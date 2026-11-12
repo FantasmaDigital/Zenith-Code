@@ -9,6 +9,7 @@
 import json
 import logging
 import threading
+from services.tenant_service import TenantReadyMixin
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -89,7 +90,7 @@ def openai_usage(response) -> None:
                   getattr(details, "cached_tokens", 0) or 0 if details else 0)
 
 
-class MetricsService:
+class MetricsService(TenantReadyMixin):
     def __init__(self):
         self._db = None
         self._ready = False
@@ -204,7 +205,7 @@ class MetricsService:
 
     @staticmethod
     def _table_exists(run, name: str) -> bool:
-        sql = ("SELECT 1 FROM information_schema.tables WHERE table_name = ?" if run.pg
+        sql = ("SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?" if run.pg
                else "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?")
         return bool(run.rows(run(sql, (name,))))
 

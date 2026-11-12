@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
+  Boxes,
   UtensilsCrossed,
   PlusCircle,
   RefreshCw,
@@ -172,7 +173,11 @@ export default function RestaurantPanel({
   themeColor,
   showToast,
   initialSubTab = 'kanban',
-  onSubTabChange
+  onSubTabChange,
+  isInventoryInstalled = false,
+  isInvoicingInstalled = false,
+  isIotInstalled = false,
+  onNavigateToInventory
 }) {
   const [subTab, setSubTabState] = useState(initialSubTab); // 'kanban' | 'orders' | 'menu' | 'stats' | 'settings'
   
@@ -235,6 +240,18 @@ export default function RestaurantPanel({
   const [isSavingItem, setIsSavingItem] = useState(false);
   const [orderForm, setOrderForm] = useState(EMPTY_ORDER);
   const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+
+  // Modal Cobro & Facturación DTE
+  const [payTargetOrder, setPayTargetOrder] = useState(null);
+  const [payForm, setPayForm] = useState({
+    dte_type: '01',
+    customer_name: '',
+    customer_nit: '',
+    customer_nrc: '',
+    payment_method: 'cash'
+  });
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const [isPrintingIot, setIsPrintingIot] = useState(false);
   const [isImporting, setIsImporting] = useState(false);
 
   const pollingRef = useRef(null);
@@ -403,19 +420,127 @@ export default function RestaurantPanel({
 
   const handleTogglePaid = async (order, e) => {
     e?.stopPropagation();
-    const next = order.payment_status === 'paid' ? 'pending' : 'paid';
+    if (order.payment_status === 'paid') {
+      // Revertir a pendiente
+      try {
+        const res = await apiFetch(`${apiBase}/api/restaurant/orders/${order.id}/payment`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payment_status: 'pending' })
+        });
+        if (res.ok) {
+          setOrders(prev => prev.map(o => (o.id === order.id ? { ...o, payment_status: 'pending' } : o)));
+          toast(`Pedido #${order.id} vuelve a pago pendiente`);
+        }
+      } catch {
+        toast('Error al actualizar el pago', true);
+      }
+      return;
+    }
+
+    // Si facturación está instalada, abrir modal para emitir DTE o Ticket POS
+    if (isInvoicingInstalled) {
+      setPayTargetOrder(order);
+      setPayForm({
+        dte_type: '01',
+        customer_name: order.customer_name || 'Consumidor Final',
+        customer_nit: '',
+        customer_nrc: '',
+        payment_method: order.payment_method || 'cash'
+      });
+      return;
+    }
+
+    // Modo sin facturación instalada: cobro directo simple
     try {
       const res = await apiFetch(`${apiBase}/api/restaurant/orders/${order.id}/payment`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ payment_status: next })
+        body: JSON.stringify({ payment_status: 'paid' })
       });
       if (res.ok) {
-        setOrders(prev => prev.map(o => (o.id === order.id ? { ...o, payment_status: next } : o)));
-        toast(next === 'paid' ? `Pedido #${order.id} marcado como pagado` : `Pedido #${order.id} vuelve a pago pendiente`);
+        setOrders(prev => prev.map(o => (o.id === order.id ? { ...o, payment_status: 'paid' } : o)));
+        toast(`Pedido #${order.id} marcado como pagado`);
       }
     } catch {
       toast('Error al actualizar el pago', true);
+    }
+  };
+
+  const handleConfirmPayAndInvoice = async (mode = 'invoice') => {
+    if (!payTargetOrder) return;
+    setIsProcessingPayment(true);
+    try {
+      if (mode === 'simple') {
+        const res = await apiFetch(`${apiBase}/api/restaurant/orders/${payTargetOrder.id}/payment`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payment_status: 'paid' })
+        });
+        if (res.ok) {
+          setOrders(prev => prev.map(o => (o.id === payTargetOrder.id ? { ...o, payment_status: 'paid' } : o)));
+          toast(`Pedido #${payTargetOrder.id} marcado como pagado (sin factura)`);
+          setPayTargetOrder(null);
+        } else {
+          toast('Error al marcar pagado', true);
+        }
+      } else {
+        // Emitir Factura / DTE oficial o Ticket POS
+        const invoicePayload = {
+          restaurant_order_id: payTargetOrder.id,
+          dte_type: payForm.dte_type,
+          customer_name: payForm.customer_name.trim() || payTargetOrder.customer_name || 'Consumidor Final',
+          customer_nit: payForm.customer_nit.trim(),
+          customer_nrc: payForm.customer_nrc.trim(),
+          payment_method: payForm.payment_method || payTargetOrder.payment_method || 'cash',
+          items: (payTargetOrder.items || []).map(it => ({
+            name: it.item_name || it.name,
+            quantity: it.quantity,
+            unit_price: it.unit_price,
+            is_exempt: false
+          }))
+        };
+        const res = await apiFetch(`${apiBase}/api/invoicing/invoices`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(invoicePayload)
+        });
+        if (res.ok) {
+          const inv = await res.json();
+          setOrders(prev => prev.map(o => (o.id === payTargetOrder.id ? { ...o, payment_status: 'paid' } : o)));
+          toast(`✅ Factura ${inv.control_number} emitida y pedido cobrado`);
+          setPayTargetOrder(null);
+        } else {
+          const err = await res.json().catch(() => ({}));
+          toast(err.detail || 'Error al emitir comprobante', true);
+        }
+      }
+    } catch {
+      toast('Error de red al procesar pago', true);
+    } finally {
+      setIsProcessingPayment(false);
+    }
+  };
+
+  const handlePrintComandaIoT = async (orderId, e) => {
+    e?.stopPropagation();
+    setIsPrintingIot(true);
+    try {
+      const res = await apiFetch(`${apiBase}/api/iot/print/comanda`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_id: orderId })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.success) {
+        toast(`✅ Comanda #${orderId} enviada a impresoras de cocina`);
+      } else {
+        toast(`⚠️ ${data.message || data.detail || 'Impresora no respondió en la red local'}`, true);
+      }
+    } catch {
+      toast('Error de red al conectar con módulo IoT', true);
+    } finally {
+      setIsPrintingIot(false);
     }
   };
 
@@ -514,6 +639,12 @@ export default function RestaurantPanel({
   };
 
   const handleToggleAvailable = async (item) => {
+    const isOutOfStock = item.stock !== null && item.stock !== undefined && item.stock <= 0;
+    // Si no tiene stock, no se puede activar sin existencias en inventario
+    if (!item.available && isOutOfStock) {
+      toast(`No se puede activar «${item.name}»: no tiene existencias. Agrega stock o compra insumos en Inventario.`, true);
+      return;
+    }
     try {
       const res = await apiFetch(`${apiBase}/api/restaurant/menu/${item.id}`, {
         method: 'PATCH',
@@ -522,7 +653,10 @@ export default function RestaurantPanel({
       });
       if (res.ok) {
         setMenu(prev => prev.map(m => (m.id === item.id ? { ...m, available: !m.available } : m)));
-        toast(`«${item.name}» marcado como ${!item.available ? 'disponible' : 'agotado'}`);
+        toast(`«${item.name}» marcado como ${!item.available ? 'disponible' : 'pausado / agotado'}`);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast(err.detail || 'Error al actualizar disponibilidad', true);
       }
     } catch {
       toast('Error al actualizar disponibilidad', true);
@@ -804,7 +938,7 @@ export default function RestaurantPanel({
   });
 
   const SECTION_INFO = {
-    kanban: { title: 'Tablero Kanban', description: 'Arrastra y suelta comandas entre columnas para cambiar de estado al instante.' },
+    kanban: { title: 'Tablero', description: 'Arrastra y suelta comandas entre columnas para cambiar de estado al instante.' },
     orders: { title: 'Historial & Filtros', description: 'Consulta y audita pedidos por rango de fechas, estados y modalidades.' },
     menu: { title: 'Menú & Platillos', description: 'Catálogo de platillos con disponibilidad automática en WhatsApp.' },
     stats: { title: 'Estadísticas', description: 'Ventas, pedidos y productos más vendidos.' },
@@ -1002,7 +1136,7 @@ export default function RestaurantPanel({
                 title="Tablero Kanban con arrastrar y soltar"
               >
                 <Kanban size={13} style={{ color: subTab === 'kanban' ? themeColor : undefined }} />
-                <span>Tablero Kanban</span>
+                <span>Tablero</span>
               </button>
               <button
                 onClick={() => setSubTab('orders')}
@@ -1054,21 +1188,33 @@ export default function RestaurantPanel({
 
         {subTab === 'menu' && (
           <div className="flex items-center gap-2 shrink-0">
-            <button
-              onClick={() => setShowBulkModal(true)}
-              className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium border border-[#3e3e3e] bg-[#232323] hover:bg-[#2e2e2e] text-zinc-200"
-            >
-              <ClipboardList size={13} />
-              <span>Carga rápida</span>
-            </button>
-            <button
-              onClick={() => { setEditingItem(null); setItemForm(EMPTY_ITEM); setShowItemModal(true); }}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-black hover:brightness-110 transition-all"
-              style={{ backgroundColor: themeColor }}
-            >
-              <PlusCircle size={14} />
-              <span>Nuevo platillo</span>
-            </button>
+            {!isInventoryInstalled ? (
+              <>
+                <button
+                  onClick={() => setShowBulkModal(true)}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-xs font-medium border border-[#3e3e3e] bg-[#232323] hover:bg-[#2e2e2e] text-zinc-200"
+                >
+                  <ClipboardList size={13} />
+                  <span>Carga rápida</span>
+                </button>
+                <button
+                  onClick={() => { setEditingItem(null); setItemForm(EMPTY_ITEM); setShowItemModal(true); }}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium text-black hover:brightness-110 transition-all"
+                  style={{ backgroundColor: themeColor }}
+                >
+                  <PlusCircle size={14} />
+                  <span>Nuevo platillo</span>
+                </button>
+              </>
+            ) : (
+              <button
+                onClick={onNavigateToInventory}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium bg-blue-500 hover:bg-blue-600 text-black font-semibold transition-all shadow-sm"
+              >
+                <Boxes size={14} />
+                <span>Gestionar Menú en Inventario</span>
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -1524,7 +1670,29 @@ export default function RestaurantPanel({
           SUBTAB: MENÚ
           ============================================================== */}
       {subTab === 'menu' && (
-        <div className="space-y-2">
+        <div className="space-y-3">
+          {isInventoryInstalled && (
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-3 bg-blue-500/10 border border-blue-500/25 rounded-md text-xs text-blue-300">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-md bg-blue-500/20 text-blue-400 flex items-center justify-center shrink-0">
+                  <Boxes size={17} />
+                </div>
+                <div>
+                  <p className="font-semibold text-zinc-100">Catálogo administrado desde Inventario & Insumos</p>
+                  <p className="text-zinc-400 text-[11px] mt-0.5">
+                    El módulo de Inventario está activo. Los artículos, costos, precios y recetas se crean y modifican allí para mantener el Kardex y stock centralizados.
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={onNavigateToInventory}
+                className="px-3 py-1.5 rounded bg-blue-500 hover:bg-blue-600 text-black font-semibold text-xs shrink-0 flex items-center gap-1.5 transition-colors self-start sm:self-auto"
+              >
+                <span>Ir a Inventario</span>
+                <ArrowRight size={13} />
+              </button>
+            </div>
+          )}
           {menu.length > 0 && (
             <div className="flex flex-col lg:flex-row lg:items-center gap-2 p-3.5 bg-[#171717] border border-[#2e2e2e] rounded-md">
               <div className="relative flex-1 min-w-[200px]">
@@ -1570,74 +1738,122 @@ export default function RestaurantPanel({
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
               {filteredMenu.map(item => {
                 const hasStock = item.stock !== null && item.stock !== undefined;
+                const isOutOfStock = hasStock && item.stock <= 0;
+                const isEffectivelyAvailable = Boolean(item.available) && !isOutOfStock;
+
                 return (
                   <div
                     key={item.id}
                     className={`p-3.5 rounded-md border transition-all flex flex-col justify-between ${
-                      item.available ? 'bg-[#171717] border-[#2e2e2e]' : 'bg-[#0e0f14] border-zinc-800/60 opacity-60'
+                      isEffectivelyAvailable
+                        ? 'bg-[#171717] border-[#2e2e2e]'
+                        : isOutOfStock
+                          ? 'bg-[#140c0f] border-rose-950/40 opacity-75'
+                          : 'bg-[#0e0f14] border-zinc-800/60 opacity-60'
                     }`}
                   >
-                    <div>
-                      <div className="flex items-start justify-between gap-2 mb-1.5">
-                        <div>
-                          <span className="text-[10px] uppercase font-medium tracking-wider px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">
-                            {item.category || 'General'}
-                          </span>
-                          <h3 className="text-sm font-medium text-zinc-100 mt-1">{item.name}</h3>
+                    <div className="flex gap-3 items-start">
+                      {item.image_url ? (
+                        <div className="w-14 h-14 rounded-lg bg-[#141414] border border-[#2e2e2e] shrink-0 overflow-hidden shadow-inner">
+                          <img
+                            src={item.image_url}
+                            alt=""
+                            className="w-full h-full object-cover"
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                          />
                         </div>
-                        <span className="text-base font-medium text-emerald-400 font-mono">{money(item.price)}</span>
+                      ) : null}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-start justify-between gap-2 mb-1.5">
+                          <div className="min-w-0">
+                            <span className="text-[10px] uppercase font-medium tracking-wider px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-400">
+                              {item.category || 'General'}
+                            </span>
+                            <h3 className="text-sm font-medium text-zinc-100 mt-1 truncate">{item.name}</h3>
+                          </div>
+                          <span className="text-base font-medium text-emerald-400 font-mono shrink-0">{money(item.price)}</span>
+                        </div>
+                        {item.description && <p className="text-xs text-zinc-400 leading-relaxed mb-2 line-clamp-2">{item.description}</p>}
+                        {hasStock && (
+                          <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded border mb-2 ${
+                            item.stock === 0
+                              ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
+                              : item.stock <= 5
+                                ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
+                                : 'bg-zinc-800 text-zinc-300 border-zinc-700'
+                          }`}>
+                            {item.stock === 0 ? 'Sin stock' : `Stock: ${item.stock}`}
+                          </span>
+                        )}
                       </div>
-                      {item.description && <p className="text-xs text-zinc-400 leading-relaxed mb-2">{item.description}</p>}
-                      {hasStock && (
-                        <span className={`inline-block text-[10px] font-semibold px-2 py-0.5 rounded border mb-2 ${
-                          item.stock === 0
-                            ? 'bg-rose-500/15 text-rose-300 border-rose-500/30'
-                            : item.stock <= 5
-                              ? 'bg-amber-500/15 text-amber-300 border-amber-500/30'
-                              : 'bg-zinc-800 text-zinc-300 border-zinc-700'
-                        }`}>
-                          {item.stock === 0 ? 'Sin stock' : `Stock: ${item.stock}`}
-                        </span>
-                      )}
                     </div>
 
                     <div className="pt-2 border-t border-[#2e2e2e] flex items-center justify-between gap-2">
                       <button
                         onClick={() => handleToggleAvailable(item)}
+                        disabled={isOutOfStock}
                         className={`inline-flex items-center gap-1.5 text-xs font-semibold px-2.5 py-1 rounded border transition-all ${
-                          item.available ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30' : 'bg-zinc-800 text-zinc-400 border-zinc-700'
+                          isEffectivelyAvailable
+                            ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/20'
+                            : isOutOfStock
+                              ? 'bg-rose-500/10 text-rose-400 border-rose-500/30 cursor-not-allowed opacity-90'
+                              : 'bg-zinc-800 text-zinc-400 border-zinc-700 hover:text-zinc-200'
                         }`}
+                        title={isOutOfStock ? (item.inventory_reason || 'Sin existencias en inventario. Agrega stock para activar.') : 'Cambiar disponibilidad'}
                       >
-                        {item.available ? <ToggleRight size={15} className="text-emerald-400" /> : <ToggleLeft size={15} />}
-                        <span>{item.available ? 'Disponible' : 'Agotado'}</span>
+                        {isEffectivelyAvailable ? (
+                          <ToggleRight size={15} className="text-emerald-400" />
+                        ) : (
+                          <ToggleLeft size={15} className={isOutOfStock ? 'text-rose-400' : 'text-zinc-500'} />
+                        )}
+                        <span>
+                          {isEffectivelyAvailable
+                            ? 'Disponible'
+                            : isOutOfStock
+                              ? 'Agotado (Sin Stock)'
+                              : 'Pausado'}
+                        </span>
                       </button>
 
                       <div className="flex items-center gap-1">
-                        <button
-                          onClick={() => {
-                            setEditingItem(item);
-                            setItemForm({
-                              name: item.name,
-                              description: item.description || '',
-                              price: String(item.price),
-                              category: item.category || 'General',
-                              available: Boolean(item.available),
-                              stock: hasStock ? String(item.stock) : ''
-                            });
-                            setShowItemModal(true);
-                          }}
-                          className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors"
-                          title="Editar platillo"
-                        >
-                          <Edit3 size={13} />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteItem(item.id, item.name)}
-                          className="p-1 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
-                          title="Eliminar platillo"
-                        >
-                          <Trash2 size={13} />
-                        </button>
+                        {!isInventoryInstalled ? (
+                          <>
+                            <button
+                              onClick={() => {
+                                setEditingItem(item);
+                                setItemForm({
+                                  name: item.name,
+                                  description: item.description || '',
+                                  price: String(item.price),
+                                  category: item.category || 'General',
+                                  available: Boolean(item.available),
+                                  stock: hasStock ? String(item.stock) : ''
+                                });
+                                setShowItemModal(true);
+                              }}
+                              className="p-1 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded transition-colors"
+                              title="Editar platillo"
+                            >
+                              <Edit3 size={13} />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteItem(item.id, item.name)}
+                              className="p-1 text-zinc-400 hover:text-rose-400 hover:bg-rose-500/10 rounded transition-colors"
+                              title="Eliminar platillo"
+                            >
+                              <Trash2 size={13} />
+                            </button>
+                          </>
+                        ) : (
+                          <button
+                            onClick={onNavigateToInventory}
+                            className="px-2 py-1 text-zinc-400 hover:text-blue-400 hover:bg-blue-500/10 rounded transition-colors text-[11px] flex items-center gap-1 border border-transparent hover:border-blue-500/20"
+                            title="Modificar precio, receta o costo en Inventario"
+                          >
+                            <Boxes size={12} />
+                            <span className="text-[10px]">Inventario</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -1774,9 +1990,158 @@ export default function RestaurantPanel({
               <button onClick={handleCopyTicket} className="px-3 py-1.5 rounded-md text-xs font-medium border border-[#3e3e3e] bg-[#232323] hover:bg-[#2e2e2e] text-zinc-300">
                 Copiar
               </button>
+              {isIotInstalled && (
+                <button
+                  onClick={() => handlePrintComandaIoT(ticket.id)}
+                  disabled={isPrintingIot}
+                  className="px-3 py-1.5 rounded-md text-xs font-semibold bg-orange-600 hover:bg-orange-500 text-white flex items-center gap-1.5 shadow disabled:opacity-50"
+                >
+                  <Printer size={13} className={isPrintingIot ? 'animate-pulse' : ''} />
+                  <span>{isPrintingIot ? 'Enviando...' : 'Cocina IoT'}</span>
+                </button>
+              )}
               <button onClick={handlePrintTicket} className="px-3 py-1.5 rounded-md text-xs font-semibold text-black hover:brightness-110" style={{ backgroundColor: themeColor }}>
                 Imprimir
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: COBRAR Y EMITIR FACTURA / DTE */}
+      {payTargetOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-sm animate-fadeIn">
+          <div className="w-full max-w-md bg-[#171717] border border-[#2e2e2e] rounded-lg p-5 space-y-4 shadow-2xl">
+            <div className="flex items-center justify-between pb-3 border-b border-[#2e2e2e]">
+              <div>
+                <h3 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
+                  <DollarSign size={16} className="text-emerald-400" />
+                  <span>Cobrar Pedido #{payTargetOrder.id}</span>
+                </h3>
+                <p className="text-xs text-zinc-400 mt-0.5">
+                  Total a pagar: <span className="font-mono font-bold text-emerald-400 text-sm">${(payTargetOrder.total || 0).toFixed(2)}</span>
+                </p>
+              </div>
+              <button onClick={() => setPayTargetOrder(null)} className="text-zinc-400 hover:text-zinc-200 p-1">
+                <X size={16} />
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              <div>
+                <label className="block text-zinc-400 font-semibold mb-1">Tipo de Comprobante</label>
+                <div className="grid grid-cols-3 gap-1.5">
+                  {[
+                    { id: '01', label: 'Factura (01)' },
+                    { id: '03', label: 'Crédito Fiscal (03)' },
+                    { id: '00', label: 'Ticket POS (00)' }
+                  ].map(t => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setPayForm({ ...payForm, dte_type: t.id })}
+                      className={`py-1.5 px-2 rounded text-center font-semibold border text-[11px] transition-all ${
+                        payForm.dte_type === t.id
+                          ? 'bg-blue-600 text-white border-blue-500'
+                          : 'bg-[#121212] text-zinc-400 border-[#2e2e2e] hover:text-zinc-200'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-zinc-400 font-semibold mb-1">Nombre / Razón Social Cliente</label>
+                <input
+                  type="text"
+                  value={payForm.customer_name}
+                  onChange={e => setPayForm({ ...payForm, customer_name: e.target.value })}
+                  placeholder="Consumidor Final"
+                  className="w-full bg-[#121212] border border-[#2e2e2e] rounded px-3 py-2 text-zinc-200 outline-none focus:border-blue-500"
+                />
+              </div>
+
+              {payForm.dte_type === '03' ? (
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="block text-zinc-400 font-semibold mb-1 text-emerald-400">NRC (Requerido) *</label>
+                    <input
+                      type="text"
+                      required
+                      value={payForm.customer_nrc}
+                      onChange={e => setPayForm({ ...payForm, customer_nrc: e.target.value })}
+                      placeholder="123456-7"
+                      className="w-full bg-[#121212] border border-emerald-500/50 rounded px-2.5 py-1.5 text-zinc-200 outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-zinc-400 font-semibold mb-1 text-emerald-400">NIT / DUI *</label>
+                    <input
+                      type="text"
+                      required
+                      value={payForm.customer_nit}
+                      onChange={e => setPayForm({ ...payForm, customer_nit: e.target.value })}
+                      placeholder="0614-000000-000-0"
+                      className="w-full bg-[#121212] border border-emerald-500/50 rounded px-2.5 py-1.5 text-zinc-200 outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                </div>
+              ) : (
+                <div>
+                  <label className="block text-zinc-400 font-semibold mb-1">NIT / DUI (Opcional)</label>
+                  <input
+                    type="text"
+                    value={payForm.customer_nit}
+                    onChange={e => setPayForm({ ...payForm, customer_nit: e.target.value })}
+                    placeholder="00000000-0"
+                    className="w-full bg-[#121212] border border-[#2e2e2e] rounded px-3 py-2 text-zinc-200 outline-none focus:border-blue-500"
+                  />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-zinc-400 font-semibold mb-1">Método de Pago</label>
+                <select
+                  value={payForm.payment_method}
+                  onChange={e => setPayForm({ ...payForm, payment_method: e.target.value })}
+                  className="w-full bg-[#121212] border border-[#2e2e2e] rounded px-3 py-2 text-zinc-200 outline-none focus:border-blue-500"
+                >
+                  <option value="cash">💵 Efectivo</option>
+                  <option value="card">💳 Tarjeta Débito / Crédito</option>
+                  <option value="transfer">🏦 Transferencia Bancaria</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="pt-3 border-t border-[#2e2e2e] flex items-center justify-between gap-2">
+              <button
+                type="button"
+                disabled={isProcessingPayment}
+                onClick={() => handleConfirmPayAndInvoice('simple')}
+                className="text-xs text-zinc-400 hover:text-zinc-200 underline"
+              >
+                Solo marcar pagado (sin factura)
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPayTargetOrder(null)}
+                  className="px-3 py-1.5 rounded text-xs text-zinc-400 hover:text-zinc-200"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  disabled={isProcessingPayment}
+                  onClick={() => handleConfirmPayAndInvoice('invoice')}
+                  className="px-4 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 font-semibold text-xs text-white shadow flex items-center gap-1.5 disabled:opacity-50"
+                >
+                  {isProcessingPayment ? 'Emitiendo...' : 'Cobrar & Facturar'}
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -4,7 +4,9 @@ import logging
 import os
 from typing import Dict, List, Any, Optional
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI, HTTPException
+
+from services.tenant_service import FEATURE_ARM, current_tenant, tenant_context, tenant_registry
 
 logger = logging.getLogger("asistente_operativo.modules.registry")
 
@@ -15,9 +17,16 @@ class ModuleRegistry:
     def __init__(self):
         # Módulos descubiertos: {module_id: ZenithModule instance}
         self._discovered: Dict[str, Any] = {}
-        # Módulos cargados/activos en runtime: {module_id: ZenithModule instance}
-        self._loaded: Dict[str, Any] = {}
+        # Módulos activos por empresa: {empresa: {module_id: ZenithModule instance}}
+        self._loaded_by_tenant: Dict[str, Dict[str, Any]] = {}
+        # Routers ya montados en FastAPI (se montan una sola vez, valen para todas las empresas)
+        self._mounted: set = set()
         self._modules_dir = os.path.dirname(__file__)
+
+    @property
+    def _loaded(self) -> Dict[str, Any]:
+        """Módulos activos de la empresa en curso."""
+        return self._loaded_by_tenant.setdefault(current_tenant(), {})
 
     # ------------------------------------------------------------------
     # DESCUBRIMIENTO
@@ -78,8 +87,16 @@ class ModuleRegistry:
             logger.error(f"Error consultando módulos instalados: {e}")
             return []
 
+    @staticmethod
+    def required_feature(manifest: Dict[str, Any]) -> str:
+        """Producto del plan al que pertenece el módulo (los módulos sin `feature` son parte del ARM)."""
+        return manifest.get("feature") or FEATURE_ARM
+
+    def in_plan(self, manifest: Dict[str, Any]) -> bool:
+        return tenant_registry.has_feature(current_tenant(), self.required_feature(manifest))
+
     def get_modules_with_status(self, db_service) -> List[Dict[str, Any]]:
-        """Lista todos los módulos disponibles con su estado de instalación."""
+        """Lista todos los módulos disponibles con su estado de instalación y si el plan los incluye."""
         if not self._discovered:
             self.discover()
         installed_ids = self.get_installed(db_service)
@@ -87,6 +104,8 @@ class ModuleRegistry:
         for mod_id, instance in self._discovered.items():
             info = dict(instance.manifest)
             info["installed"] = mod_id in installed_ids
+            info["feature"] = self.required_feature(instance.manifest)
+            info["in_plan"] = self.in_plan(instance.manifest)
             result.append(info)
         return result
 
@@ -104,6 +123,26 @@ class ModuleRegistry:
         if instance is None:
             raise ValueError(f"Módulo '{module_id}' no encontrado.")
 
+        if not self.in_plan(instance.manifest):
+            raise ValueError(
+                f"El plan de esta empresa no incluye el producto «{self.required_feature(instance.manifest)}» "
+                f"necesario para «{instance.manifest.get('name', module_id)}»."
+            )
+
+        # Validar dependencias (módulos padre requeridos)
+        depends = instance.manifest.get("depends") or []
+        installed_ids = self.get_installed(db_service)
+        missing = [dep for dep in depends if dep not in installed_ids]
+        if missing:
+            missing_names = []
+            for m in missing:
+                parent_inst = self._discovered.get(m)
+                missing_names.append(parent_inst.manifest.get("name", m) if parent_inst else m)
+            raise ValueError(
+                f"El módulo '{instance.manifest.get('name', module_id)}' no puede instalarse de forma aislada; "
+                f"requiere que esté instalado previamente su módulo operacional padre: {', '.join(missing_names)}."
+            )
+
         try:
             instance.on_install(db_service)
         except Exception as e:
@@ -112,7 +151,7 @@ class ModuleRegistry:
 
         db_service.mark_module_installed(module_id)
 
-        if app is not None and module_id not in self._loaded:
+        if app is not None:
             self._register_router(instance, app)
 
         self._loaded[module_id] = instance
@@ -129,6 +168,21 @@ class ModuleRegistry:
         if instance is None:
             raise ValueError(f"Módulo '{module_id}' no encontrado.")
 
+        # Validar que ningún módulo instalado dependa de este módulo
+        installed_ids = self.get_installed(db_service)
+        dependents = []
+        for mod_id in installed_ids:
+            if mod_id == module_id:
+                continue
+            child_inst = self._discovered.get(mod_id)
+            if child_inst and module_id in (child_inst.manifest.get("depends") or []):
+                dependents.append(child_inst.manifest.get("name", mod_id))
+        if dependents:
+            raise ValueError(
+                f"No se puede desinstalar '{instance.manifest.get('name', module_id)}' porque es el módulo operacional padre "
+                f"de: {', '.join(dependents)}. Debes desinstalar primero los módulos dependientes."
+            )
+
         try:
             instance.on_uninstall(db_service)
         except Exception as e:
@@ -142,11 +196,22 @@ class ModuleRegistry:
     # STARTUP
     # ------------------------------------------------------------------
     def load_installed(self, app: FastAPI, db_service) -> None:
-        """Al startup, carga e inicializa todos los módulos marcados como instalados en BD."""
+        """Al startup, carga los módulos instalados de CADA empresa activa y monta sus routers (una vez)."""
         if not self._discovered:
             self.discover()
-        installed_ids = self.get_installed(db_service)
-        for module_id in installed_ids:
+        try:
+            from services.tenant_service import tenant_registry
+            slugs = tenant_registry.active_slugs()
+        except Exception as e:
+            logger.error(f"No se pudo listar las empresas para cargar módulos: {e}")
+            slugs = [current_tenant()]
+        for slug in slugs:
+            with tenant_context(slug):
+                self._load_tenant(app, db_service)
+
+    def _load_tenant(self, app: FastAPI, db_service) -> None:
+        """Carga los módulos instalados de la empresa en curso."""
+        for module_id in self.get_installed(db_service):
             instance = self._discovered.get(module_id)
             if instance is None:
                 logger.warning(f"Módulo instalado '{module_id}' no encontrado en disco. Saltando.")
@@ -158,22 +223,36 @@ class ModuleRegistry:
                     logger.error(f"Error en on_load de '{module_id}': {e}")
                 self._register_router(instance, app)
                 self._loaded[module_id] = instance
-                logger.info(f"🚀 Módulo '{module_id}' cargado en startup.")
+                logger.info(f"🚀 Módulo '{module_id}' cargado en startup ({current_tenant()}).")
 
     def _register_router(self, instance, app: FastAPI) -> None:
-        """Registra el APIRouter del módulo en la aplicación FastAPI."""
+        """Monta el APIRouter del módulo (una sola vez). Cada petición exige que su empresa lo tenga instalado."""
+        module_id = instance.manifest.get("id", "?")
+        if module_id in self._mounted:
+            return
         try:
             router = instance.get_router()
             if router and router.routes:
-                app.include_router(router)
-                logger.info(f"📡 Router del módulo '{instance.manifest['id']}' registrado en FastAPI.")
+                def require_installed(_mid=module_id, _inst=instance):
+                    if _mid not in self._loaded:
+                        raise HTTPException(status_code=403, detail=f"El módulo '{_mid}' no está instalado en esta empresa.")
+                    if not self.in_plan(_inst.manifest):
+                        raise HTTPException(status_code=403, detail=f"El plan de esta empresa no incluye el módulo '{_mid}'.")
+                app.include_router(router, dependencies=[Depends(require_installed)])
+            public = instance.get_public_router()
+            if public and public.routes:
+                app.include_router(public)
+            self._mounted.add(module_id)
+            logger.info(f"📡 Router del módulo '{module_id}' registrado en FastAPI.")
         except Exception as e:
-            logger.error(f"Error registrando router del módulo '{instance.manifest.get('id', '?')}': {e}")
+            logger.error(f"Error registrando router del módulo '{module_id}': {e}")
 
     def get_tools(self) -> list:
         """Herramientas de todos los módulos activos."""
         tools = []
         for module_id, instance in self._loaded.items():
+            if not self.in_plan(instance.manifest):
+                continue
             try:
                 tools += list(instance.get_tools() or [])
             except Exception as e:
@@ -205,8 +284,9 @@ class ModuleRegistry:
         return {}
 
     def is_loaded(self, module_id: str) -> bool:
-        """True si el módulo está instalado y activo en runtime."""
-        return module_id in self._loaded
+        """True si el módulo está instalado, activo en runtime e incluido en el plan de la empresa en curso."""
+        instance = self._loaded.get(module_id)
+        return instance is not None and self.in_plan(instance.manifest)
 
     # ------------------------------------------------------------------
     # EXTENSIONES DE PROMPT

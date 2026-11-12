@@ -11,7 +11,7 @@ from services.knowledge_service import knowledge_service
 from services.lead_service import lead_service
 from services import agent_tools, agents, metrics_service as metrics
 from services.multimodal_service import multimodal_service
-from services.message_formatter import clean_chat_formatting
+from services.message_formatter import clean_chat_formatting, strip_repetitive_greeting
 from services.prompt_service import (
     DEFAULT_TRANSFER_MESSAGE,
     TRANSFER_KEYWORDS,
@@ -237,6 +237,8 @@ class GeminiService:
 
         # Formateo limpio: eliminar asteriscos toscos y estructurar con viñetas estéticas
         assistant_reply = clean_chat_formatting(assistant_reply)
+        has_history = len(recent_history) > 0
+        assistant_reply = strip_repetitive_greeting(assistant_reply, has_history=has_history, user_message=user_message)
 
         already_transferred = any(a["tool"] == "transferir_a_asesor" and a["ok"] for a in ctx.actions)
         if not already_transferred and (

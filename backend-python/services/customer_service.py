@@ -9,6 +9,7 @@ import json
 import logging
 import re
 import threading
+from services.tenant_service import TenantReadyMixin, thread_target
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -51,7 +52,7 @@ def _phone_for(session_id: str) -> Optional[str]:
     return session_id if re.fullmatch(r"\d{8,15}", session_id or "") else None
 
 
-class CustomerService:
+class CustomerService(TenantReadyMixin):
     def __init__(self):
         self._db = None
         self._ready = False
@@ -115,7 +116,7 @@ class CustomerService:
                 created_at VARCHAR(40), updated_at VARCHAR(40))""")
             run("CREATE INDEX IF NOT EXISTS idx_customers_last_seen ON customers(last_seen_at)")
             cols = ({r["column_name"] for r in run.rows(run(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = 'customers'"))}
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'customers'"))}
                 if run.pg else {r["name"] for r in run.rows(run("PRAGMA table_info(customers)"))})
             for col in ("current_agent", "current_agent_at"):
                 if col not in cols:
@@ -399,7 +400,7 @@ class CustomerService:
         try:
             with self._conn() as run:
                 exists = run.rows(run(
-                    "SELECT 1 FROM information_schema.tables WHERE table_name = 'restaurant_orders'" if run.pg else
+                    "SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'restaurant_orders'" if run.pg else
                     "SELECT 1 FROM sqlite_master WHERE type='table' AND name='restaurant_orders'"))
                 if not exists:
                     return None
@@ -474,7 +475,7 @@ class CustomerService:
                 return False
             self._summarizing.add(session_id)
         if background:
-            threading.Thread(target=self._summarize_safe, args=(session_id,), daemon=True).start()
+            threading.Thread(target=thread_target(self._summarize_safe), args=(session_id,), daemon=True).start()
         else:
             self._summarize_safe(session_id)
         return True

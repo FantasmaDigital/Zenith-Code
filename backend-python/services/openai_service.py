@@ -4,7 +4,7 @@ from openai import OpenAI
 from config import settings
 from services.knowledge_service import knowledge_service
 from services.lead_service import lead_service
-from services.message_formatter import clean_chat_formatting
+from services.message_formatter import clean_chat_formatting, strip_repetitive_greeting
 import json
 
 from services import agent_tools, agents, metrics_service as metrics
@@ -87,6 +87,8 @@ class OpenAIService:
             model_text, ctx = run_agent(ctx.reroute)
             ctx.actions = first.actions + ctx.actions
         assistant_reply = clean_chat_formatting(agent_tools.compose_reply(model_text, ctx))
+        has_history = len(recent_history) > 0
+        assistant_reply = strip_repetitive_greeting(assistant_reply, has_history=has_history, user_message=user_message)
 
         already_transferred = any(a["tool"] == "transferir_a_asesor" and a["ok"] for a in ctx.actions)
         if not already_transferred and (

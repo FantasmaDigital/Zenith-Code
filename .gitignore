@@ -188,3 +188,6 @@ $RECYCLE.BIN/
 .gemini/
 .agents/
 .claude/
+
+# Multi-empresa: bases de datos SQLite de cada empresa (modo sin PostgreSQL)
+backend-python/data/

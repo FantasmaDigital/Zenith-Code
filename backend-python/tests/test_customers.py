@@ -144,6 +144,7 @@ class TestListAndApi(CustomerTestCase):
             customer_service.note_contact(sid, name)
         self.app = FastAPI()
         self.app.include_router(main.router)
+        self.app.include_router(main.arm_router)
 
     def test_list_search_and_stage(self):
         cid = customer_service.get_by_session("50370000021")["id"]

@@ -193,6 +193,7 @@ class TestApi(AutomationTestCase):
     def test_endpoints(self):
         app = FastAPI()
         app.include_router(main.router)
+        app.include_router(main.arm_router)
         self.assertEqual(TestClient(app).get("/api/agent/tasks").status_code, 401)
         app.dependency_overrides[require_auth] = lambda: "admin"
         client = TestClient(app)

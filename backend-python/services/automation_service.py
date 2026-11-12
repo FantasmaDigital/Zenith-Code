@@ -12,6 +12,7 @@ Todo queda registrado como una tarea con su estado.
 import json
 import logging
 import threading
+from services.tenant_service import DEFAULT_TENANT, TenantReadyMixin, tenant_context, tenant_registry
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
@@ -69,7 +70,7 @@ def _clean(v):
     return v.isoformat() if isinstance(v, datetime) else v
 
 
-class AutomationService:
+class AutomationService(TenantReadyMixin):
     def __init__(self):
         self._db = None
         self._ready = False
@@ -129,7 +130,7 @@ class AutomationService:
                 dedupe_key VARCHAR(200) NOT NULL UNIQUE, error TEXT, decided_by VARCHAR(100),
                 created_at VARCHAR(40) NOT NULL, decided_at VARCHAR(40), sent_at VARCHAR(40))""")
             cols = ({r["column_name"] for r in run.rows(run(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = 'agent_tasks'"))}
+                "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'agent_tasks'"))}
                 if run.pg else {r["name"] for r in run.rows(run("PRAGMA table_info(agent_tasks)"))})
             if "payload" not in cols:
                 run("ALTER TABLE agent_tasks ADD COLUMN payload TEXT")  # argumentos de una acción por aprobar
@@ -212,7 +213,7 @@ class AutomationService:
     # CANDIDATOS
     # ------------------------------------------------------------------
     def _table_exists(self, run, name: str) -> bool:
-        sql = ("SELECT 1 FROM information_schema.tables WHERE table_name = ?" if run.pg
+        sql = ("SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = ?" if run.pg
                else "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?")
         return bool(run.rows(run(sql, (name,))))
 
@@ -597,14 +598,23 @@ class AutomationService:
         def loop():
             while not self._stop.wait(SCAN_INTERVAL_SECONDS):
                 try:
-                    self.scan()
+                    slugs = tenant_registry.active_slugs()
                 except Exception as e:
-                    logger.warning(f"Error en el ciclo del agente proactivo: {e}")
-                try:
-                    from services.metrics_service import metrics_service
-                    metrics_service.maybe_send_weekly()
-                except Exception as e:
-                    logger.warning(f"Error enviando el reporte semanal: {e}")
+                    logger.warning(f"No se pudo listar las empresas activas: {e}")
+                    slugs = [DEFAULT_TENANT]
+                for slug in slugs:  # cada empresa se revisa con sus propios datos, ajustes y claves
+                    if not tenant_registry.has_feature(slug, "arm"):
+                        continue  # el agente proactivo es parte del ARM
+                    with tenant_context(slug):
+                        try:
+                            self.scan()
+                        except Exception as e:
+                            logger.warning(f"Error en el ciclo del agente proactivo ({slug}): {e}")
+                        try:
+                            from services.metrics_service import metrics_service
+                            metrics_service.maybe_send_weekly()
+                        except Exception as e:
+                            logger.warning(f"Error enviando el reporte semanal ({slug}): {e}")
 
         self._thread = threading.Thread(target=loop, name="agente-proactivo", daemon=True)
         self._thread.start()

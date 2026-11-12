@@ -3,6 +3,7 @@ import requests
 from typing import Dict, Any, Optional
 from config import settings
 from services.meta_service import meta_service
+from services.tenant_service import current_tenant
 
 logger = logging.getLogger("asistente_operativo.whatsapp_gateway")
 
@@ -27,7 +28,7 @@ class WhatsAppGatewayService:
     @staticmethod
     def _auth_headers(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
         """Headers con la clave interna compartida que exige el gateway."""
-        headers = {"X-Internal-Key": settings.INTERNAL_API_KEY}
+        headers = {"X-Internal-Key": settings.INTERNAL_API_KEY, "X-Tenant-Id": current_tenant()}
         if extra:
             headers.update(extra)
         return headers
@@ -35,8 +36,12 @@ class WhatsAppGatewayService:
     def _candidate_urls(self) -> list[str]:
         """
         Retorna candidatos de conexión resolviendo automáticamente entre Docker y host local.
+        Si la empresa activa no tiene una URL personalizada, usa el Gateway por defecto de la plataforma.
         """
-        primary = self.gateway_url
+        import os
+        primary = (self.gateway_url or "").strip()
+        if not primary:
+            primary = os.getenv("WHATSAPP_GATEWAY_URL", "http://whatsapp-gateway:3000").rstrip("/")
         candidates = [primary]
         if "localhost" in primary or "127.0.0.1" in primary:
             docker_url = primary.replace("localhost", "whatsapp-gateway").replace("127.0.0.1", "whatsapp-gateway")
@@ -108,14 +113,15 @@ class WhatsAppGatewayService:
             return meta_service.get_status()
         return {**self.get_baileys_status(), "channel": "baileys"}
 
-    def get_baileys_status(self) -> Dict[str, Any]:
+    def get_baileys_status(self, peek: bool = False) -> Dict[str, Any]:
         """
         Consulta el estado de conexión del Gateway de WhatsApp con resolución automática de red.
+        peek=True: solo consulta; el gateway no abre una sesión (ni genera QR) si la empresa no tiene una.
         """
         candidates = self._candidate_urls()
         last_error = None
         for base_url in candidates:
-            endpoint = f"{base_url}/api/status"
+            endpoint = f"{base_url}/api/status" + ("?peek=1" if peek else "")
             try:
                 response = requests.get(endpoint, headers=self._auth_headers(), timeout=3)
                 if response.status_code == 200:

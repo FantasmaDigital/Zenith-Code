@@ -4,24 +4,111 @@ import logging
 import sqlite3
 from typing import List, Dict, Any, Optional
 from datetime import datetime, timezone
+import threading
 from services.encoding_utils import fix_mojibake
+from services.tenant_service import DEFAULT_TENANT, current_tenant, pg_schema_for, sqlite_path_for, tenant_context
 
 logger = logging.getLogger("asistente_operativo.db")
 
 class DatabaseService:
+    _PG_BASE_DDL = """
+        CREATE TABLE IF NOT EXISTS knowledge_items (
+            id SERIAL PRIMARY KEY,
+            title VARCHAR(255) NOT NULL,
+            source_type VARCHAR(50) NOT NULL DEFAULT 'text',
+            source_url TEXT,
+            category VARCHAR(100) DEFAULT 'general',
+            content TEXT NOT NULL,
+            created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+        CREATE INDEX IF NOT EXISTS idx_k_category ON knowledge_items(category);
+        CREATE INDEX IF NOT EXISTS idx_k_source_type ON knowledge_items(source_type);
+
+        CREATE TABLE IF NOT EXISTS app_settings (
+            key VARCHAR(100) PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS conversation_handoffs (
+            session_id VARCHAR(100) PRIMARY KEY,
+            transferred_to_human BOOLEAN NOT NULL DEFAULT TRUE,
+            transferred_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            last_activity_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            reason TEXT DEFAULT 'Derivado a agente humano',
+            inactivity_hours DOUBLE PRECISION DEFAULT 6.0,
+            tag VARCHAR(50) DEFAULT 'ATENCIÓN HUMANA',
+            notes TEXT DEFAULT ''
+        );
+        ALTER TABLE conversation_handoffs ADD COLUMN IF NOT EXISTS tag VARCHAR(50) DEFAULT 'ATENCIÓN HUMANA';
+        ALTER TABLE conversation_handoffs ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
+
+        CREATE TABLE IF NOT EXISTS zenith_modules (
+            module_id VARCHAR(100) PRIMARY KEY,
+            installed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+            enabled BOOLEAN DEFAULT TRUE
+        );
+    """
+
     def __init__(self):
         self.db_url = os.getenv("DATABASE_URL", "").strip()
         self.is_postgres = self.db_url.startswith("postgresql://") or self.db_url.startswith("postgres://")
-        self.sqlite_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "knowledge_db.sqlite")
+        # SQLITE_PATH permite ubicar la BD en un volumen escribible (la imagen de producción no corre como root)
+        self.sqlite_path = os.getenv("SQLITE_PATH", "").strip() or os.path.join(
+            os.path.dirname(os.path.dirname(__file__)), "knowledge_db.sqlite")
+        # Multi-empresa: empresas cuya base/esquema ya se preparó en este proceso
+        self._provisioned = {DEFAULT_TENANT}
+        self._tenant_lock = threading.RLock()
         self._init_db()
 
-    def _get_pg_connection(self):
+    # ------------------------------------------------------------------
+    # MULTI-EMPRESA: cada empresa tiene su propia base SQLite / esquema PostgreSQL
+    # ------------------------------------------------------------------
+    def ensure_tenant(self, slug: str) -> None:
+        """Crea (una sola vez por proceso) la base o el esquema de la empresa y sus tablas base."""
+        if slug in self._provisioned:
+            return
+        with self._tenant_lock:
+            if slug in self._provisioned:
+                return
+            self._provisioned.add(slug)  # antes de preparar, para que las conexiones internas no recursen
+            try:
+                with tenant_context(slug):
+                    if self.is_postgres:
+                        import psycopg2
+                        conn = psycopg2.connect(self.db_url)
+                        try:
+                            with conn.cursor() as cur:
+                                cur.execute(f'CREATE SCHEMA IF NOT EXISTS "{pg_schema_for(slug)}"')
+                                cur.execute(f'SET search_path TO "{pg_schema_for(slug)}", public')
+                                cur.execute(self._PG_BASE_DDL)
+                            conn.commit()
+                        finally:
+                            conn.close()
+                    else:
+                        self._ensure_sqlite_tables()
+            except Exception:
+                self._provisioned.discard(slug)
+                raise
+
+    def _get_pg_connection(self, tenant=None):
         import psycopg2
         import psycopg2.extras
-        return psycopg2.connect(self.db_url)
+        slug = tenant or current_tenant()
+        self.ensure_tenant(slug)
+        conn = psycopg2.connect(self.db_url)
+        schema = pg_schema_for(slug)
+        if schema:
+            with conn.cursor() as cur:
+                cur.execute(f'SET search_path TO "{schema}", public')
+            conn.commit()
+        return conn
 
-    def _get_sqlite_connection(self):
-        conn = sqlite3.connect(self.sqlite_path)
+    def _get_sqlite_connection(self, tenant=None):
+        slug = tenant or current_tenant()
+        self.ensure_tenant(slug)
+        conn = sqlite3.connect(sqlite_path_for(slug, self.sqlite_path))
         conn.row_factory = sqlite3.Row
         return conn
 
@@ -32,45 +119,7 @@ class DatabaseService:
                 try:
                     conn = self._get_pg_connection()
                     with conn.cursor() as cur:
-                        cur.execute("""
-                            CREATE TABLE IF NOT EXISTS knowledge_items (
-                                id SERIAL PRIMARY KEY,
-                                title VARCHAR(255) NOT NULL,
-                                source_type VARCHAR(50) NOT NULL DEFAULT 'text',
-                                source_url TEXT,
-                                category VARCHAR(100) DEFAULT 'general',
-                                content TEXT NOT NULL,
-                                created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                            );
-                            CREATE INDEX IF NOT EXISTS idx_k_category ON knowledge_items(category);
-                            CREATE INDEX IF NOT EXISTS idx_k_source_type ON knowledge_items(source_type);
-
-                            CREATE TABLE IF NOT EXISTS app_settings (
-                                key VARCHAR(100) PRIMARY KEY,
-                                value TEXT NOT NULL,
-                                updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
-                            );
-
-                            CREATE TABLE IF NOT EXISTS conversation_handoffs (
-                                session_id VARCHAR(100) PRIMARY KEY,
-                                transferred_to_human BOOLEAN NOT NULL DEFAULT TRUE,
-                                transferred_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                                last_activity_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                                reason TEXT DEFAULT 'Derivado a agente humano',
-                                inactivity_hours DOUBLE PRECISION DEFAULT 6.0,
-                                tag VARCHAR(50) DEFAULT 'ATENCIÓN HUMANA',
-                                notes TEXT DEFAULT ''
-                            );
-                            ALTER TABLE conversation_handoffs ADD COLUMN IF NOT EXISTS tag VARCHAR(50) DEFAULT 'ATENCIÓN HUMANA';
-                            ALTER TABLE conversation_handoffs ADD COLUMN IF NOT EXISTS notes TEXT DEFAULT '';
-
-                            CREATE TABLE IF NOT EXISTS zenith_modules (
-                                module_id VARCHAR(100) PRIMARY KEY,
-                                installed_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
-                                enabled BOOLEAN DEFAULT TRUE
-                            );
-                        """)
+                        cur.execute(self._PG_BASE_DDL)
                     conn.commit()
                     conn.close()
                     logger.info("✅ Conexión con PostgreSQL establecida y tablas listas.")

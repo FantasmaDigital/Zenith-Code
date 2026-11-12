@@ -5,7 +5,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("asistente_operativo.modules.restaurant")
 
@@ -180,7 +180,7 @@ class RestaurantService:
 
     def _column_names(self, tx: _Tx, table: str) -> set:
         if tx.is_pg:
-            rows = tx.execute("SELECT column_name AS name FROM information_schema.columns WHERE table_name = ?", (table,)).all()
+            rows = tx.execute("SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = ?", (table,)).all()
         else:
             rows = tx.execute(f"PRAGMA table_info({table})").all()
         return {r["name"] for r in rows}
@@ -199,6 +199,7 @@ class RestaurantService:
         # Columnas añadidas después de la v1.0.0: (tabla, nombre, definición)
         new_columns = [
             ("restaurant_menu", "stock", "INTEGER"),
+            ("restaurant_menu", "image_url", "TEXT DEFAULT ''"),
             ("restaurant_orders", "order_type", "TEXT DEFAULT 'delivery'"),
             ("restaurant_orders", "customer_phone", "TEXT DEFAULT ''"),
             ("restaurant_orders", "delivery_address", "TEXT DEFAULT ''"),
@@ -215,7 +216,7 @@ class RestaurantService:
         with self._tx() as tx:
             tx.execute(f"""CREATE TABLE IF NOT EXISTS restaurant_menu (
                 id {pk}, name TEXT NOT NULL, description TEXT DEFAULT '', price {real} NOT NULL DEFAULT 0,
-                category TEXT DEFAULT 'General', available {boolean}, created_at {ts})""")
+                category TEXT DEFAULT 'General', available {boolean}, image_url TEXT DEFAULT '', created_at {ts})""")
             tx.execute(f"""CREATE TABLE IF NOT EXISTS restaurant_orders (
                 id {pk}, session_id TEXT NOT NULL, customer_name TEXT DEFAULT 'Cliente',
                 items_json TEXT NOT NULL DEFAULT '[]', status TEXT DEFAULT 'pending', total {real} DEFAULT 0,
@@ -256,6 +257,11 @@ class RestaurantService:
                 })
         config["zones"] = zones
         self._get_db().set_setting(CONFIG_SETTING_KEY, json.dumps(config, ensure_ascii=False))
+        try:
+            from services.gemini_service import gemini_service
+            gemini_service._prompt_cache = {}
+        except Exception:
+            pass
         return config
 
     def local_now(self, config: Optional[Dict[str, Any]] = None, now: Optional[datetime] = None) -> datetime:
@@ -326,8 +332,25 @@ class RestaurantService:
             "id": row["id"], "name": row["name"], "description": row.get("description") or "",
             "price": float(row["price"]), "category": row.get("category") or "General",
             "available": bool(row["available"]), "stock": None if stock is None else int(stock),
+            "image_url": row.get("image_url") or "",
             "created_at": str(row.get("created_at") or ""),
         }
+
+    def _is_inventory_installed(self) -> bool:
+        try:
+            from modules.registry import module_registry
+            from services.db_service import db_service
+            return "inventory" in module_registry.get_installed(db_service)
+        except Exception:
+            return False
+
+    def _check_inventory_availability(self, menu_id: int, quantity: float = 1.0) -> Tuple[bool, str, float]:
+        try:
+            from modules.inventory.service import inventory_service
+            return inventory_service.check_availability(menu_id, quantity)
+        except Exception as e:
+            logger.warning(f"Error verificando disponibilidad de inventario: {e}")
+            return True, "Disponible", float("inf")
 
     def list_menu(self, only_available: bool = False) -> List[Dict[str, Any]]:
         sql = "SELECT * FROM restaurant_menu"
@@ -336,22 +359,81 @@ class RestaurantService:
         sql += " ORDER BY category, name"
         with self._tx() as tx:
             rows = tx.execute(sql, (True,) if only_available else ()).all()
-        return [self._menu_row(r) for r in rows]
+        items = [self._menu_row(r) for r in rows]
+
+        # Si inventario está instalado, sincronizar disponibilidad y stock en vivo
+        if self._is_inventory_installed():
+            filtered = []
+            for item in items:
+                is_avail, reason, max_qty = self._check_inventory_availability(item["id"], 1.0)
+                item["inventory_reason"] = reason
+                if not is_avail:
+                    item["stock"] = 0
+                    item["available"] = False
+                    if only_available:
+                        continue
+                else:
+                    if max_qty != float("inf"):
+                        item["stock"] = int(max_qty)
+                filtered.append(item)
+            return filtered
+
+        # Si inventario no está instalado, cualquier ítem con stock 0 no está disponible
+        for item in items:
+            if item.get("stock") is not None and item["stock"] <= 0:
+                item["available"] = False
+        if only_available:
+            items = [i for i in items if i["available"]]
+
+        return items
 
     def get_menu_item(self, item_id: int) -> Optional[Dict[str, Any]]:
         with self._tx() as tx:
             row = tx.execute("SELECT * FROM restaurant_menu WHERE id = ?", (item_id,)).one()
-        return self._menu_row(row) if row else None
+        if not row:
+            return None
+        item = self._menu_row(row)
+        if self._is_inventory_installed():
+            is_avail, reason, max_qty = self._check_inventory_availability(item["id"], 1.0)
+            item["inventory_reason"] = reason
+            if not is_avail:
+                item["stock"] = 0
+                item["available"] = False
+            elif max_qty != float("inf"):
+                item["stock"] = int(max_qty)
+        elif item.get("stock") is not None and item["stock"] <= 0:
+            item["available"] = False
+        return item
+
+    def _sync_inventory_menu_item(self, item_dict: Dict[str, Any], action: str = "save") -> None:
+        """
+        Notifica al módulo de Inventario de cambios en el menú de Restaurante.
+        TOTALMENTE DESACOPLADO: Si el módulo de Inventario no está instalado,
+        esta función no hace nada y Restaurante opera con 100% de normalidad.
+        """
+        try:
+            from modules.registry import module_registry
+            from services.db_service import db_service
+            if "inventory" not in module_registry.get_installed(db_service):
+                return
+            from modules.inventory.service import inventory_service
+            inventory_service.sync_restaurant_item(item_dict, action=action)
+        except Exception as e:
+            logger.debug(f"Aviso en sincronización menú -> inventario: {e}")
 
     def add_menu_item(self, data) -> Dict[str, Any]:
         stock = getattr(data, "stock", None)
         available = bool(data.available) and (stock is None or stock > 0)
+        image_url = getattr(data, "image_url", "") or ""
         with self._tx() as tx:
             item_id = tx.insert(
-                "INSERT INTO restaurant_menu (name, description, price, category, available, stock) VALUES (?, ?, ?, ?, ?, ?)",
-                (data.name.strip(), data.description or "", data.price, (data.category or "General").strip(), available, stock),
+                "INSERT INTO restaurant_menu (name, description, price, category, available, stock, image_url) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (data.name.strip(), data.description or "", data.price, (data.category or "General").strip(), available, stock, image_url),
             )
-        return self.get_menu_item(item_id)
+        item = self.get_menu_item(item_id)
+        if item:
+            self._sync_inventory_menu_item(item, action="save")
+        return item
 
     def add_menu_items_bulk(self, items: List[Any]) -> List[Dict[str, Any]]:
         return [self.add_menu_item(item) for item in items]
@@ -363,6 +445,18 @@ class RestaurantService:
         if "name" in fields and fields["name"] is not None:
             fields["name"] = fields["name"].strip()
         fields = {k: v for k, v in fields.items() if v is not None or k == "stock"}
+
+        # Validación estricta: No permitir activar si no hay existencias
+        if fields.get("available") is True:
+            if self._is_inventory_installed():
+                is_avail, reason, _ = self._check_inventory_availability(item_id, 1.0)
+                if not is_avail:
+                    raise ValueError(f"No se puede marcar como disponible: {reason}")
+            else:
+                current = self.get_menu_item(item_id)
+                if current and current.get("stock") is not None and current["stock"] <= 0:
+                    raise ValueError("No se puede marcar como disponible: el platillo no tiene stock.")
+
         if fields.get("stock") == 0:
             fields["available"] = False
         elif fields.get("stock") and "available" not in fields:
@@ -371,11 +465,17 @@ class RestaurantService:
         with self._tx() as tx:
             if tx.execute(f"UPDATE restaurant_menu SET {set_clause} WHERE id = ?", tuple(fields.values()) + (item_id,)).rowcount == 0:
                 return None
-        return self.get_menu_item(item_id)
+        item = self.get_menu_item(item_id)
+        if item:
+            self._sync_inventory_menu_item(item, action="save")
+        return item
 
     def delete_menu_item(self, item_id: int) -> bool:
         with self._tx() as tx:
-            return tx.execute("DELETE FROM restaurant_menu WHERE id = ?", (item_id,)).rowcount > 0
+            ok = tx.execute("DELETE FROM restaurant_menu WHERE id = ?", (item_id,)).rowcount > 0
+        if ok:
+            self._sync_inventory_menu_item({"id": item_id}, action="delete")
+        return ok
 
     def get_menu_text(self, with_ids: bool = False, with_stock: bool = True) -> str:
         items = self.list_menu(only_available=True)
@@ -389,8 +489,8 @@ class RestaurantService:
                 lines.append(current.upper())
             ident = f"[id {item['id']}] " if with_ids else ""
             desc = f" - {item['description']}" if item["description"] else ""
-            low = f" (quedan {item['stock']})" if with_stock and item["stock"] is not None and item["stock"] <= 5 else ""
-            lines.append(f"- {ident}{item['name']}{desc}: {_money(item['price'])}{low}")
+            stk = f" (Stock disponible en inventario: {item['stock']} unidades)" if (with_stock and item["stock"] is not None) else ""
+            lines.append(f"- {ident}{item['name']}{desc}: {_money(item['price'])}{stk}")
         return "\n".join(lines)
 
     # ------------------------------------------------------------------
@@ -500,8 +600,14 @@ class RestaurantService:
                     raise OrderError(f"«{item['name']}» no está disponible en este momento.")
                 if req["quantity"] > MAX_QTY_PER_ITEM:
                     raise OrderError(f"Máximo {MAX_QTY_PER_ITEM} unidades de «{item['name']}» por pedido.")
-                if item["stock"] is not None and req["quantity"] > item["stock"]:
-                    raise OrderError(f"Solo quedan {item['stock']} unidades de «{item['name']}».")
+                # Verificación estricta de stock
+                if self._is_inventory_installed():
+                    is_avail, reason, avail_qty = self._check_inventory_availability(menu_id, req["quantity"])
+                    if not is_avail:
+                        raise OrderError(f"No es posible vender «{item['name']}»: {reason}. Debes agregar stock o registrar una compra en Inventario & Insumos.")
+                else:
+                    if item["stock"] is not None and req["quantity"] > item["stock"]:
+                        raise OrderError(f"Solo quedan {item['stock']} unidades de «{item['name']}».")
                 line = round(item["price"] * req["quantity"], 2)
                 subtotal += line
                 order_items.append({
@@ -586,6 +692,10 @@ class RestaurantService:
                 (new_status, json.dumps(history), (cancel_reason or "").strip() if new_status == "cancelled" else order["cancel_reason"],
                  _ts(_now_utc()), order_id))
             if new_status == "cancelled":
+                try:
+                    self._sync_inventory_on_order(order, "cancel")
+                except Exception:
+                    pass
                 for line in order["items"]:
                     # Reactiva el producto solo si se había agotado por este stock
                     tx.execute(
@@ -608,7 +718,22 @@ class RestaurantService:
                 self._sync_finance_on_payment(updated, payment_status)
             except Exception as e:
                 logger.debug(f"Aviso en sincronización con finanzas: {e}")
+            try:
+                self._sync_inventory_on_order(updated, "paid" if payment_status == "paid" else "cancel")
+            except Exception as e:
+                logger.debug(f"Aviso en sincronización con inventario: {e}")
         return updated
+
+    def _sync_inventory_on_order(self, order: Dict[str, Any], action: str = "paid") -> None:
+        """Notifica al módulo de Inventario para deducir o restituir insumos y productos."""
+        try:
+            from modules.inventory.service import inventory_service
+            if action == "paid":
+                inventory_service.deduct_order(order)
+            elif action == "cancel":
+                inventory_service.void_order_deductions(order["id"])
+        except Exception as e:
+            logger.debug(f"Aviso en sincronización con inventario: {e}")
 
     def _sync_finance_on_payment(self, order: Dict[str, Any], payment_status: str) -> None:
         """Notifica al módulo de Finanzas si está disponible."""

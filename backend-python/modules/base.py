@@ -15,6 +15,11 @@ class ZenithModule(ABC):
         """Retorna el APIRouter con las rutas del módulo. Override si el módulo tiene rutas."""
         return APIRouter()
 
+    def get_public_router(self):
+        """Rutas SIN login (p. ej. la tarjeta que ve el cliente final). Cada ruta debe resolver por sí misma
+        la empresa (normalmente desde la URL) y comprobar que tenga el módulo activo. Opcional."""
+        return None
+
     def on_install(self, db_service) -> None:
         """Ejecutado al instalar el módulo. Crear tablas, datos iniciales, etc."""
         pass

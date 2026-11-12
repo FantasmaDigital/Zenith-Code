@@ -235,7 +235,7 @@ class FinanceService:
             # Columnas de anulación (los movimientos nunca se borran, se anulan)
             if is_pg:
                 cols = {r["column_name"] for r in tx.execute(
-                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'finance_transactions'").all()}
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'finance_transactions'").all()}
             else:
                 cols = {r["name"] for r in tx.execute("PRAGMA table_info(finance_transactions)").all()}
             for col, definition in (("voided_at", "VARCHAR(40)"), ("void_reason", "TEXT"), ("voided_by", "VARCHAR(100)"),
@@ -245,7 +245,7 @@ class FinanceService:
 
             if is_pg:
                 shift_cols = {r["column_name"] for r in tx.execute(
-                    "SELECT column_name FROM information_schema.columns WHERE table_name = 'finance_shifts'").all()}
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'finance_shifts'").all()}
             else:
                 shift_cols = {r["name"] for r in tx.execute("PRAGMA table_info(finance_shifts)").all()}
             for col, definition in (("total_withdrawals", f"{real_type} DEFAULT 0.0"), ("total_deposits", f"{real_type} DEFAULT 0.0"),
@@ -941,7 +941,7 @@ class FinanceService:
             with self._tx() as tx:
                 # Comprobar si existe la tabla restaurant_orders
                 check_table = tx.execute("""
-                    SELECT 1 FROM information_schema.tables WHERE table_name = 'restaurant_orders'
+                    SELECT 1 FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'restaurant_orders'
                 """ if tx.is_pg else """
                     SELECT 1 FROM sqlite_master WHERE type='table' AND name='restaurant_orders'
                 """).one()

@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   BookOpen,
   Boxes,
+  Building2,
   UtensilsCrossed,
   PlusCircle,
   Globe,
@@ -72,15 +73,31 @@ import {
   Inbox,
   Workflow,
   History,
-  MessagesSquare
+  MessagesSquare,
+  Power,
+  AlertTriangle,
+  Package,
+  ChefHat,
+  ShoppingBag,
+  Printer,
+  Briefcase,
+  UserPlus,
+  CreditCard,
 } from 'lucide-react';
 import ModulesPanel from './components/ModulesPanel';
+import TenantsPanel from './components/TenantsPanel';
 import RestaurantPanel from './components/RestaurantPanel';
 import FinancePanel from './components/FinancePanel';
+import InventoryPanel from './components/InventoryPanel';
+import InvoicingPanel from './components/InvoicingPanel';
+import IotPrintingPanel from './components/IotPrintingPanel';
+import ServicesPanel from './components/ServicesPanel';
 import ModuleGuide from './components/ModuleGuide';
 import CustomersPanel from './components/CustomersPanel';
 import AgentPanel from './components/AgentPanel';
 import InboxPanel from './components/InboxPanel';
+import UsersPanel from './components/UsersPanel';
+import LoyaltyPanel, { PublicLoyaltyCard, PublicStampFlow, getPublicCardParams } from './components/LoyaltyPanel';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
@@ -109,9 +126,114 @@ const storeToken = (data) => {
   }
 };
 
+const TENANT_STORAGE_KEY = 'zenith_login_tenant';
+const ACTING_TENANT_KEY = 'zenith_acting_tenant';
+
+const parseTokenPayload = (token) => {
+  if (!token || typeof token !== 'string') return null;
+  try {
+    const part = token.split('.')[0];
+    if (!part) return null;
+    const base64 = part.replace(/-/g, '+').replace(/_/g, '/');
+    const padded = base64.padEnd(base64.length + (4 - (base64.length % 4)) % 4, '=');
+    return JSON.parse(atob(padded));
+  } catch {
+    return null;
+  }
+};
+
+const getStoredAuth = () => {
+  try { return JSON.parse(localStorage.getItem(AUTH_STORAGE_KEY) || 'null') || {}; } catch { return {}; }
+};
+
+const isSuperadmin = () => {
+  const auth = getStoredAuth();
+  if (auth && auth.superadmin === true) return true;
+  const token = getStoredToken();
+  if (!token) return false;
+  const payload = parseTokenPayload(token);
+  if (!payload) return false;
+  if (payload.uid !== undefined && payload.uid !== null) return false;
+  if (payload.sa === true) return true;
+  if (!payload.tenant || payload.tenant === 'default') return true;
+  return false;
+};
+
+const getCurrentRole = () => {
+  const payload = parseTokenPayload(getStoredToken());
+  return (payload && payload.urole) || 'owner';
+};
+const getCurrentUserId = () => {
+  const payload = parseTokenPayload(getStoredToken());
+  return payload && payload.uid !== undefined ? payload.uid : null;
+};
+const canManageUsers = () => ['owner', 'admin'].includes(getCurrentRole());
+
+const ROOT_TABS = new Set([
+  'knowledge-base', 'create-document', 'new-document', 'add-text',
+  'web-scraper', 'scraper', 'crawler', 'scrape',
+  'whatsapp-gateway', 'whatsapp', 'qr',
+  'playground', 'chat', 'simulation',
+  'brand-settings', 'settings', 'brand',
+  'human-handoff', 'paused-users', 'handoff', 'handoffs',
+  'modules', 'ecosystem',
+  'tenants', 'empresas',
+  'users', 'usuarios',
+  'restaurant', 'pedidos', 'ordenes',
+  'inventory', 'inventario', 'stock', 'insumos',
+  'finance', 'caja', 'finanzas',
+  'customers', 'clientes', 'contacts',
+  'agent', 'agente',
+  'invoicing', 'facturacion', 'dte', 'factura', 'facturas',
+  'iot-printing', 'iot_printing', 'iot', 'impresoras', 'hardware',
+  'inbox', 'bandeja',
+  'services', 'servicios', 'leads', 'proposals', 'propuestas',
+  'loyalty', 'fidelidad', 'tarjetas'
+]);
+
+const getTenantFromUrl = (pathname) => {
+  try {
+    const path = pathname !== undefined ? pathname : (typeof window !== 'undefined' ? window.location.pathname : '');
+    const parts = (path || '').toLowerCase().split('/').filter(Boolean);
+    if (parts.length === 0) return '';
+    const first = parts[0];
+    if (ROOT_TABS.has(first)) return '';
+    // Protección adicional: si contiene palabras clave del sistema, nunca es un tenant
+    if (first.includes('iot') || first.includes('invoic') || first.includes('factura') || first.includes('print') || first.includes('service')) return '';
+    return first;
+  } catch {
+    return '';
+  }
+};
+
+// Un superadmin puede operar otra empresa: se envía X-Tenant-Id en cada petición
+// La URL (/:slug/...) tiene máxima prioridad para soportar multi-pestaña real.
+const getActingTenant = () => {
+  const urlTenant = getTenantFromUrl();
+  if (urlTenant) {
+    if (urlTenant === 'default' || ROOT_TABS.has(urlTenant)) return '';
+    return urlTenant;
+  }
+  if (!isSuperadmin()) return '';
+  try {
+    const val = localStorage.getItem(ACTING_TENANT_KEY) || '';
+    if (ROOT_TABS.has(val) || val.includes('iot') || val.includes('invoic') || val.includes('factura') || val.includes('service')) {
+      localStorage.removeItem(ACTING_TENANT_KEY);
+      return '';
+    }
+    return val;
+  } catch { return ''; }
+};
+const setActingTenant = (slug) => {
+  try {
+    if (slug) localStorage.setItem(ACTING_TENANT_KEY, slug); else localStorage.removeItem(ACTING_TENANT_KEY);
+  } catch { /* ignorar */ }
+};
+
 const clearStoredToken = () => {
   try {
     localStorage.removeItem(AUTH_STORAGE_KEY);
+    localStorage.removeItem(ACTING_TENANT_KEY);
   } catch {
     // Ignorar
   }
@@ -122,6 +244,11 @@ const apiFetch = async (url, options = {}) => {
   const token = getStoredToken();
   const headers = { ...(options.headers || {}) };
   if (token) headers.Authorization = `Bearer ${token}`;
+  const acting = getActingTenant();
+  if (acting) headers['X-Tenant-Id'] = acting;
+  if (options.body && typeof options.body === 'string' && !headers['Content-Type']) {
+    headers['Content-Type'] = 'application/json';
+  }
   const res = await fetch(url, { ...options, headers });
   if (res.status === 401) {
     clearStoredToken();
@@ -306,6 +433,20 @@ const ROUTES = {
     breadcrumb: 'Usuarios con IA Pausada'
   }
 ,
+    tenants: {
+      id: 'tenants',
+      path: '/tenants',
+      label: 'Empresas',
+      category: 'Configuración del sistema',
+      breadcrumb: 'Empresas'
+    },
+    users: {
+      id: 'users',
+      path: '/users',
+      label: 'Usuarios',
+      category: 'Configuración del sistema',
+      breadcrumb: 'Usuarios'
+    },
     modules: {
       id: 'modules',
       path: '/modules',
@@ -319,6 +460,13 @@ const ROUTES = {
       label: 'Restaurante & Pedidos',
       category: 'GESTIÓN DE OPERACIONES',
       breadcrumb: 'Restaurante & Pedidos'
+    },
+    inventory: {
+      id: 'inventory',
+      path: '/inventory',
+      label: 'Inventario & Insumos',
+      category: 'GESTIÓN DE OPERACIONES',
+      breadcrumb: 'Inventario & Insumos'
     },
     agent: {
       id: 'agent',
@@ -347,8 +495,32 @@ const ROUTES = {
       label: 'Caja & Finanzas',
       category: 'GESTIÓN FINANCIERA',
       breadcrumb: 'Caja & Finanzas'
+    },
+    invoicing: {
+      id: 'invoicing',
+      path: '/invoicing',
+      label: 'Facturación & DTE',
+      category: 'FINANZAS & FISCAL',
+      breadcrumb: 'Facturación'
+    },
+    iot_printing: {
+      id: 'iot_printing',
+      path: '/iot-printing',
+      label: 'Impresión IoT',
+      category: 'HARDWARE & IOT',
+      breadcrumb: 'Impresoras'
+    },
+    loyalty: {
+      id: 'loyalty',
+      path: '/loyalty',
+      label: 'Tarjetas de Fidelidad',
+      category: 'FIDELIZACIÓN',
+      breadcrumb: 'Tarjetas de Fidelidad'
     }
   };
+
+// Pantallas que pertenecen al ARM (agente, WhatsApp, conocimiento): se ocultan si el plan no lo incluye
+const ARM_TABS = new Set(['library', 'add-text', 'scrape', 'whatsapp', 'chat', 'handoffs', 'inbox', 'customers', 'agent']);
 
 const getTabFromPath = (pathname) => {
   const clean = (pathname || '').toLowerCase().replace(/\/+$/, '') || '/';
@@ -359,11 +531,17 @@ const getTabFromPath = (pathname) => {
   if (clean === '/brand-settings' || clean === '/settings' || clean === '/brand') return 'settings';
   if (clean === '/human-handoff' || clean === '/paused-users' || clean === '/handoff' || clean === '/handoffs') return 'handoffs';
   if (clean === '/modules' || clean === '/ecosystem') return 'modules';
+  if (clean === '/tenants' || clean === '/empresas') return 'tenants';
+  if (clean === '/users' || clean === '/usuarios') return 'users';
   if (clean === '/restaurant' || clean === '/pedidos' || clean === '/ordenes') return 'restaurant';
+  if (clean === '/inventory' || clean === '/inventario' || clean === '/stock' || clean === '/insumos') return 'inventory';
   if (clean === '/finance' || clean === '/caja' || clean === '/finanzas') return 'finance';
+  if (clean === '/invoicing' || clean === '/facturacion' || clean === '/dte') return 'invoicing';
+  if (clean === '/iot-printing' || clean === '/iot' || clean === '/impresoras') return 'iot_printing';
   if (clean === '/customers' || clean === '/clientes' || clean === '/contacts') return 'customers';
   if (clean === '/agent' || clean === '/agente') return 'agent';
   if (clean === '/inbox' || clean === '/bandeja') return 'inbox';
+  if (clean === '/loyalty' || clean === '/fidelidad' || clean === '/tarjetas') return 'loyalty';
   return 'library';
 };
 
@@ -374,6 +552,10 @@ const getPathFromTab = (tabId) => {
 // Sub-secciones de los módulos: cada una tiene su propia URL (/restaurant/menu, /finance/reports…)
 // para que al recargar o compartir el enlace se abra la misma pantalla.
 const SUB_ROUTES = {
+  loyalty: {
+    default: 'pos',
+    slugs: { pos: 'pos', kiosk: 'kiosk', cards: 'cards', programs: 'programs', rewards: 'rewards', stats: 'stats', guide: 'guide' }
+  },
   agent: {
     default: 'approvals',
     slugs: { approvals: 'approvals', automations: 'automations', history: 'history', metrics: 'metrics' }
@@ -382,30 +564,67 @@ const SUB_ROUTES = {
     default: 'kanban',
     slugs: { kanban: 'kanban', orders: 'orders', menu: 'menu', stats: 'stats', settings: 'settings', guide: 'guide' }
   },
+  inventory: {
+    default: 'stock',
+    slugs: { stock: 'stock', recipes: 'recipes', purchases: 'purchases', waste: 'waste', kardex: 'kardex', guide: 'guide' }
+  },
   finance: {
     default: 'shift',
     slugs: {
       shift: 'shift', shifts_history: 'shift-history', transactions: 'transactions', reports: 'reports',
       categories: 'categories', audit: 'audit', guide: 'guide'
     }
+  },
+  invoicing: {
+    default: 'invoices',
+    slugs: { invoices: 'invoices', new: 'new', config: 'config', guide: 'guide' }
+  },
+  iot_printing: {
+    default: 'printers',
+    slugs: { printers: 'printers', logs: 'logs', guide: 'guide' }
+  },
+  services: {
+    default: 'services',
+    slugs: { services: 'services', leads: 'leads', proposals: 'proposals', stats: 'stats', settings: 'settings', config: 'settings', guide: 'guide' }
   }
 };
 
 const parseLocation = (pathname) => {
   const parts = (pathname || '').toLowerCase().split('/').filter(Boolean);
-  const tab = getTabFromPath(parts.length ? `/${parts[0]}` : '/');
-  if (tab === 'customers' || tab === 'inbox') return { tab, sub: /^\d+$/.test(parts[1] || '') ? parts[1] : null };
+  if (parts.length === 0) return { tenant: '', tab: 'library', sub: null };
+
+  let tenant = '';
+  let restParts = parts;
+  if (!ROOT_TABS.has(parts[0])) {
+    tenant = parts[0];
+    restParts = parts.slice(1);
+  }
+
+  const tab = getTabFromPath(restParts.length ? `/${restParts[0]}` : '/');
+  if (tab === 'customers' || tab === 'inbox') {
+    return { tenant, tab, sub: /^\d+$/.test(restParts[1] || '') ? restParts[1] : null };
+  }
   const sub = SUB_ROUTES[tab];
-  if (!sub) return { tab, sub: null };
-  const match = Object.entries(sub.slugs).find(([, slug]) => slug === parts[1]);
-  return { tab, sub: match ? match[0] : sub.default };
+  if (!sub) return { tenant, tab, sub: null };
+  const match = Object.entries(sub.slugs).find(([, slug]) => slug === restParts[1]);
+  return { tenant, tab, sub: match ? match[0] : sub.default };
 };
 
-const buildPath = (tab, subTab) => {
+const buildPath = (tab, subTab, targetTenant) => {
   const base = getPathFromTab(tab);
-  if (tab === 'customers' || tab === 'inbox') return subTab ? `${base}/${subTab}` : base;
-  const sub = SUB_ROUTES[tab];
-  return sub ? `${base}/${sub.slugs[subTab] || sub.slugs[sub.default]}` : base;
+  let rel = base;
+  if (tab === 'customers' || tab === 'inbox') {
+    rel = subTab ? `${base}/${subTab}` : base;
+  } else {
+    const sub = SUB_ROUTES[tab];
+    rel = sub ? `${base}/${sub.slugs[subTab] || sub.slugs[sub.default]}` : base;
+  }
+  if (tab === 'tenants') return '/tenants';
+  const tenant = targetTenant !== undefined ? targetTenant : getActingTenant();
+  if (tenant && tenant !== 'default') {
+    return `/${tenant}${rel}`;
+  }
+  return rel;
 };
 
 // ==============================================================
@@ -467,16 +686,35 @@ function NavGroup({ id, icon: Icon, label, open, onToggle, hasActive, indicator,
 
 function Dashboard({ onLogout }) {
   const initialLocation = parseLocation(window.location.pathname);
+  if (initialLocation.tenant && isSuperadmin()) {
+    setActingTenant(initialLocation.tenant);
+  }
   const [activeTab, setActiveTab] = useState(initialLocation.tab);
   const [restaurantSubTab, setRestaurantSubTab] = useState(
     initialLocation.tab === 'restaurant' ? initialLocation.sub : SUB_ROUTES.restaurant.default
   );
+  const [inventorySubTab, setInventorySubTab] = useState(
+    initialLocation.tab === 'inventory' ? initialLocation.sub : SUB_ROUTES.inventory.default
+  );
   const [financeSubTab, setFinanceSubTab] = useState(
     initialLocation.tab === 'finance' ? initialLocation.sub : SUB_ROUTES.finance.default
+  );
+  const [invoicingSubTab, setInvoicingSubTab] = useState(
+    initialLocation.tab === 'invoicing' ? initialLocation.sub : SUB_ROUTES.invoicing.default
+  );
+  const [iotSubTab, setIotSubTab] = useState(
+    initialLocation.tab === 'iot_printing' ? initialLocation.sub : SUB_ROUTES.iot_printing.default
+  );
+  const [servicesSubTab, setServicesSubTab] = useState(
+    initialLocation.tab === 'services' ? initialLocation.sub : SUB_ROUTES.services.default
   );
   const [customerId, setCustomerId] = useState(initialLocation.tab === 'customers' ? initialLocation.sub : null);
   const [inboxId, setInboxId] = useState(initialLocation.tab === 'inbox' ? initialLocation.sub : null);
   const [agentSubTab, setAgentSubTab] = useState(initialLocation.tab === 'agent' ? initialLocation.sub : SUB_ROUTES.agent.default);
+  const [loyaltySubTab, setLoyaltySubTab] = useState(initialLocation.tab === 'loyalty' ? initialLocation.sub : SUB_ROUTES.loyalty.default);
+  // Productos contratados por la empresa (plan). null = aún no se sabe: se asume ARM para que el menú no parpadee
+  const [features, setFeatures] = useState(null);
+  const hasArm = features === null || features.includes('arm');
   const [pendingApprovals, setPendingApprovals] = useState(0);
   const [openNavGroups, setOpenNavGroups] = useState(() => {
     try { return JSON.parse(localStorage.getItem('zenith_nav_groups') || '{}'); } catch { return {}; }
@@ -498,9 +736,14 @@ function Dashboard({ onLogout }) {
   // Al cargar se normaliza sin crear historial (p. ej. /caja -> /finance/shift); después cada cambio crea una entrada.
   const firstUrlSync = useRef(true);
   const currentSubTab = activeTab === 'restaurant' ? restaurantSubTab
+    : activeTab === 'inventory' ? inventorySubTab
     : activeTab === 'finance' ? financeSubTab
+    : activeTab === 'invoicing' ? invoicingSubTab
+    : activeTab === 'iot_printing' ? iotSubTab
+    : activeTab === 'services' ? servicesSubTab
     : activeTab === 'customers' ? customerId
     : activeTab === 'agent' ? agentSubTab
+    : activeTab === 'loyalty' ? loyaltySubTab
     : activeTab === 'inbox' ? inboxId : null;
   useEffect(() => {
     const path = buildPath(activeTab, currentSubTab);
@@ -514,13 +757,24 @@ function Dashboard({ onLogout }) {
   // Atrás / Adelante del navegador: leer la pantalla desde la URL
   useEffect(() => {
     const handlePopState = () => {
-      const { tab, sub } = parseLocation(window.location.pathname);
+      const { tenant, tab, sub } = parseLocation(window.location.pathname);
+      const currentActing = getActingTenant();
+      if (tenant !== currentActing && isSuperadmin()) {
+        setActingTenant(tenant);
+        window.location.reload();
+        return;
+      }
       setActiveTab(tab);
       if (tab === 'restaurant') setRestaurantSubTab(sub);
+      if (tab === 'inventory') setInventorySubTab(sub);
       if (tab === 'finance') setFinanceSubTab(sub);
+      if (tab === 'invoicing') setInvoicingSubTab(sub);
+      if (tab === 'iot_printing') setIotSubTab(sub);
+      if (tab === 'services') setServicesSubTab(sub);
       if (tab === 'customers') setCustomerId(sub);
       if (tab === 'agent') setAgentSubTab(sub);
       if (tab === 'inbox') setInboxId(sub);
+      if (tab === 'loyalty') setLoyaltySubTab(sub);
     };
     window.addEventListener('popstate', handlePopState);
     return () => window.removeEventListener('popstate', handlePopState);
@@ -529,6 +783,7 @@ function Dashboard({ onLogout }) {
   // Datos globales del sistema
   const [installedModules, setInstalledModules] = useState([]);
   const [moduleManifests, setModuleManifests] = useState({});
+  const [modulesLoaded, setModulesLoaded] = useState(false);
 
   const fetchInstalledModules = async () => {
     try {
@@ -538,6 +793,7 @@ function Dashboard({ onLogout }) {
         const installed = data.filter(m => m.installed).map(m => m.id);
         setInstalledModules(installed);
         setModuleManifests(Object.fromEntries(data.map(m => [m.id, m])));
+        setModulesLoaded(true);
       }
     } catch (e) {
       console.warn('Error fetching installed modules:', e);
@@ -546,26 +802,77 @@ function Dashboard({ onLogout }) {
 
   useEffect(() => {
     fetchInstalledModules();
+    // Validar y sincronizar rol de superadmin con el backend
+    apiFetch(`${API_BASE}/api/auth/check`)
+      .then(res => res.ok ? res.json() : null)
+      .then(data => {
+        if (data && Array.isArray(data.features)) setFeatures(data.features);
+        if (data && data.superadmin !== undefined) {
+          const stored = getStoredAuth();
+          if (stored.superadmin !== data.superadmin) {
+            storeToken({ ...stored, superadmin: data.superadmin, tenant: data.tenant });
+          }
+        }
+      })
+      .catch(() => {});
   }, []);
 
-  const [stats, setStats] = useState({
-    database_type: 'PostgreSQL',
-    total_db_items: 0,
-    cached: true,
-    active_provider: 'gemini',
-    active_model: 'gemini-2.5-flash',
-    company: '',
-    bot_name: '',
-    company_logo: '',
-    bot_avatar: '',
-    primary_color: '#3ecf8e',
-    welcome_message: '',
-    transfer_message: '',
-    support_phone: '',
-    website_url: '',
-    wa_connected: false,
-    gateway_state: ''
+  const [headerTenants, setHeaderTenants] = useState([]);
+  const [tenantDropdownOpen, setTenantDropdownOpen] = useState(false);
+
+  const [stats, setStats] = useState(() => {
+    let cachedCompany = '';
+    let cachedLogo = '';
+    let cachedBot = '';
+    let cachedColor = '#3ecf8e';
+    try {
+      const tenantKey = getActingTenant() || 'default';
+      cachedCompany = localStorage.getItem(`zenith_cached_company_${tenantKey}`) || '';
+      cachedLogo = localStorage.getItem(`zenith_cached_logo_${tenantKey}`) || '';
+      cachedBot = localStorage.getItem(`zenith_cached_bot_${tenantKey}`) || '';
+      cachedColor = localStorage.getItem(`zenith_cached_color_${tenantKey}`) || '#3ecf8e';
+    } catch {}
+    return {
+      database_type: 'PostgreSQL',
+      total_db_items: 0,
+      cached: true,
+      active_provider: 'gemini',
+      active_model: 'gemini-2.5-flash',
+      company: cachedCompany,
+      bot_name: cachedBot,
+      company_logo: cachedLogo,
+      bot_avatar: '',
+      primary_color: cachedColor,
+      welcome_message: '',
+      transfer_message: '',
+      support_phone: '',
+      website_url: '',
+      wa_connected: false,
+      gateway_state: '',
+      tenant_active: true
+    };
   });
+
+  const [isReactivatingTenant, setIsReactivatingTenant] = useState(false);
+  const handleReactivateCurrentTenant = async () => {
+    const slug = getActingTenant();
+    if (!slug) return;
+    setIsReactivatingTenant(true);
+    try {
+      const res = await apiFetch(`${API_BASE}/api/tenants/${slug}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ active: true })
+      });
+      if (!res.ok) throw new Error(await res.text());
+      showToast(`Empresa "${stats.company || slug}" reactivada con éxito.`);
+      await fetchStats();
+    } catch (err) {
+      showToast('Error al reactivar empresa: ' + err.message, true);
+    } finally {
+      setIsReactivatingTenant(false);
+    }
+  };
 
   const [items, setItems] = useState([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -596,27 +903,40 @@ function Dashboard({ onLogout }) {
   const [isBatchIndexing, setIsBatchIndexing] = useState(false);
 
   // Formulario Settings (cargado dinámicamente desde la BD)
-  const [settingsForm, setSettingsForm] = useState({
-    company_name: '',
-    bot_name: '',
-    company_logo: '',
-    bot_avatar: '',
-    primary_color: '#3ecf8e',
-    bot_tone: '',
-    brand_instructions: '',
-    welcome_message: '',
-    transfer_message: '',
-    support_phone: '',
-    effective_support_phone: '',
-    detected_whatsapp_phone: '',
-    handoff_inactivity_hours: 6.0,
-    website_url: '',
-    ai_provider: '',
-    gemini_api_key: '',
-    gemini_model: '',
-    openai_api_key: '',
-    openai_model: '',
-    whatsapp_gateway_url: ''
+  const [settingsForm, setSettingsForm] = useState(() => {
+    let cachedColor = '#3ecf8e';
+    let cachedCompany = '';
+    let cachedBot = '';
+    let cachedLogo = '';
+    try {
+      const tenantKey = getActingTenant() || 'default';
+      cachedColor = localStorage.getItem(`zenith_cached_color_${tenantKey}`) || '#3ecf8e';
+      cachedCompany = localStorage.getItem(`zenith_cached_company_${tenantKey}`) || '';
+      cachedBot = localStorage.getItem(`zenith_cached_bot_${tenantKey}`) || '';
+      cachedLogo = localStorage.getItem(`zenith_cached_logo_${tenantKey}`) || '';
+    } catch {}
+    return {
+      company_name: cachedCompany,
+      bot_name: cachedBot,
+      company_logo: cachedLogo,
+      bot_avatar: '',
+      primary_color: cachedColor,
+      bot_tone: '',
+      brand_instructions: '',
+      welcome_message: '',
+      transfer_message: '',
+      support_phone: '',
+      effective_support_phone: '',
+      detected_whatsapp_phone: '',
+      handoff_inactivity_hours: 6.0,
+      website_url: '',
+      ai_provider: '',
+      gemini_api_key: '',
+      gemini_model: '',
+      openai_api_key: '',
+      openai_model: '',
+      whatsapp_gateway_url: ''
+    };
   });
   const [activeHandoffs, setActiveHandoffs] = useState([]);
   const [handoffSearch, setHandoffSearch] = useState('');
@@ -643,13 +963,7 @@ function Dashboard({ onLogout }) {
   const avatarInputRef = useRef(null);
 
   // Playground Chat
-  const [messages, setMessages] = useState([
-    {
-      role: 'assistant',
-      text: '¡Hola! Soy tu Asistente Operativo. Pregúntame sobre los servicios, garantías, precios o cualquier dato indexado en la base de datos.',
-      isCustomized: false
-    }
-  ]);
+  const [messages, setMessages] = useState([]);
   const [chatInput, setChatInput] = useState('');
   const [isChatLoading, setIsChatLoading] = useState(false);
   const [chatAudioBase64, setChatAudioBase64] = useState(null);
@@ -749,12 +1063,12 @@ function Dashboard({ onLogout }) {
   // Toast
   const [toast, setToast] = useState({ show: false, message: '', isError: false });
 
-  const showToast = (message, isError = false) => {
+  const showToast = useCallback((message, isError = false) => {
     setToast({ show: true, message, isError });
     setTimeout(() => {
       setToast(prev => ({ ...prev, show: false }));
     }, 4000);
-  };
+  }, []);
 
   // ==============================================================
   // ESTADO Y MÉTODOS DEL CANAL DE WHATSAPP GATEWAY (BAILEYS)
@@ -900,8 +1214,10 @@ function Dashboard({ onLogout }) {
   // Carga inicial y polling periódico
   useEffect(() => {
     fetchStats();
-    fetchKnowledge();
     fetchSettings();
+    // Sin ARM en el plan no se consulta WhatsApp, bandeja, conocimiento ni aprobaciones del agente
+    if (!hasArm) return undefined;
+    fetchKnowledge();
     fetchActiveHandoffs();
     fetchWhatsAppStatus();
     fetchPendingApprovals();
@@ -916,7 +1232,14 @@ function Dashboard({ onLogout }) {
       }
     }, 4000);
     return () => clearInterval(interval);
-  }, [activeTab, waStatus.status]);
+  }, [activeTab, waStatus.status, hasArm]);
+
+  // Si la empresa no tiene ARM, esas pantallas no existen: se lleva al usuario a su producto
+  useEffect(() => {
+    if (!hasArm && modulesLoaded && ARM_TABS.has(activeTab)) {
+      setActiveTab(installedModules.includes('loyalty') ? 'loyalty' : 'settings');
+    }
+  }, [hasArm, modulesLoaded, activeTab, installedModules]);
 
   const fetchStats = async () => {
     try {
@@ -928,13 +1251,23 @@ function Dashboard({ onLogout }) {
       const gw = resRoot.gateway_integration || {};
       const isConnected = Boolean(gw.connected);
       const gwState = gw.gateway_state || (isConnected ? 'CONNECTED' : 'DISCONNECTED');
+      const companyName = resRoot.company || resRoot.company_name || '';
+      const tenantKey = getActingTenant() || 'default';
+
+      try {
+        if (companyName) localStorage.setItem(`zenith_cached_company_${tenantKey}`, companyName);
+        if (resRoot.bot_name) localStorage.setItem(`zenith_cached_bot_${tenantKey}`, resRoot.bot_name);
+        if (resRoot.company_logo !== undefined) localStorage.setItem(`zenith_cached_logo_${tenantKey}`, resRoot.company_logo || '');
+        if (resRoot.primary_color) localStorage.setItem(`zenith_cached_color_${tenantKey}`, resRoot.primary_color);
+      } catch {}
 
       setStats({
         database_type: resKb.database_type || 'PostgreSQL',
         total_db_items: resKb.total_db_items ?? 0,
         cached: resKb.cached ?? true,
         active_provider: resRoot.active_provider || 'gemini',
-        company: resRoot.company || resRoot.company_name || '',
+        company: companyName,
+        tenant_active: resRoot.tenant_active ?? true,
         bot_name: resRoot.bot_name || 'Asistente Operativo',
         company_logo: resRoot.company_logo || '',
         bot_avatar: resRoot.bot_avatar || '',
@@ -982,6 +1315,13 @@ function Dashboard({ onLogout }) {
     try {
       const res = await apiFetch(`${API_BASE}/api/settings`);
       const data = await res.json();
+      try {
+        const tenantKey = getActingTenant() || 'default';
+        if (data.company_name) localStorage.setItem(`zenith_cached_company_${tenantKey}`, data.company_name);
+        if (data.bot_name) localStorage.setItem(`zenith_cached_bot_${tenantKey}`, data.bot_name);
+        if (data.company_logo !== undefined) localStorage.setItem(`zenith_cached_logo_${tenantKey}`, data.company_logo || '');
+        if (data.primary_color) localStorage.setItem(`zenith_cached_color_${tenantKey}`, data.primary_color);
+      } catch {}
       setSettingsForm({
         company_name: data.company_name || '',
         bot_name: data.bot_name || '',
@@ -1123,19 +1463,6 @@ function Dashboard({ onLogout }) {
     const notes = (h.notes || '').toLowerCase();
     return sid.includes(q) || reason.includes(q) || tag.includes(q) || notes.includes(q);
   });
-
-  const handleSyncCache = async () => {
-    setIsSyncing(true);
-    try {
-      await apiFetch(`${API_BASE}/api/knowledge/sync`, { method: 'POST' });
-      showToast('⚡ In-Memory Hot Cache sincronizado con éxito');
-      fetchStats();
-    } catch (err) {
-      showToast('Error sincronizando el caché', true);
-    } finally {
-      setTimeout(() => setIsSyncing(false), 500);
-    }
-  };
 
   const handleCreateDoc = async (e) => {
     e.preventDefault();
@@ -1483,32 +1810,42 @@ function Dashboard({ onLogout }) {
       <aside className={`fixed inset-y-0 left-0 z-50 w-60 bg-[#171717] border-r border-[#2e2e2e] flex flex-col transition-transform duration-200 md:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Brand Header */}
         <div className="h-14 px-3 border-b border-[#2e2e2e] flex items-center justify-between">
-          <div className="flex items-center gap-2 overflow-hidden">
-            {stats.company_logo ? (
-              <img
-                src={stats.company_logo}
-                alt={stats.company || 'Logo'}
-                className="w-8 h-8 rounded-md object-contain bg-zinc-900 border border-[#2e2e2e] p-0.5 shrink-0"
-              />
-            ) : (
-              <div
-                className="w-8 h-8 rounded-md flex items-center justify-center font-semibold text-white text-sm shrink-0 transition-colors"
-                style={{ backgroundColor: themeColor }}
-              >
-                {companyInitial}
-              </div>
-            )}
-            <div className="flex flex-col min-w-0">
-              <span className="font-medium text-sm text-zinc-100 truncate">{stats.company || 'Zenith Platform'}</span>
-              <div className="flex items-center gap-1.5 text-xs text-zinc-400">
-                <span
-                  className="w-2 h-2 rounded-full animate-pulse"
-                  style={{ backgroundColor: themeColor }}
-                ></span>
-                <span className="truncate">{stats.bot_name || 'Asistente Operativo'}</span>
+          {!stats.company ? (
+            <div className="flex items-center gap-2 overflow-hidden animate-pulse">
+              <div className="w-8 h-8 rounded-md bg-zinc-800/80 shrink-0" />
+              <div className="flex flex-col gap-1.5 min-w-0">
+                <div className="h-3.5 w-24 bg-zinc-800/80 rounded" />
+                <div className="h-2.5 w-16 bg-zinc-800/50 rounded" />
               </div>
             </div>
-          </div>
+          ) : (
+            <div className="flex items-center gap-2 overflow-hidden">
+              {stats.company_logo ? (
+                <img
+                  src={stats.company_logo}
+                  alt={stats.company}
+                  className="w-8 h-8 rounded-md object-contain bg-zinc-900 border border-[#2e2e2e] p-0.5 shrink-0"
+                />
+              ) : (
+                <div
+                  className="w-8 h-8 rounded-md flex items-center justify-center font-semibold text-white text-sm shrink-0 transition-colors"
+                  style={{ backgroundColor: themeColor }}
+                >
+                  {companyInitial}
+                </div>
+              )}
+              <div className="flex flex-col min-w-0">
+                <span className="font-medium text-sm text-zinc-100 truncate">{stats.company}</span>
+                <div className="flex items-center gap-1.5 text-xs text-zinc-400">
+                  <span
+                    className="w-2 h-2 rounded-full animate-pulse"
+                    style={{ backgroundColor: themeColor }}
+                  ></span>
+                  <span className="truncate">{stats.bot_name || 'Asistente Operativo'}</span>
+                </div>
+              </div>
+            </div>
+          )}
           <button className="md:hidden text-zinc-400 hover:text-white p-1" onClick={() => setMobileMenuOpen(false)}>
             <X size={18} />
           </button>
@@ -1523,15 +1860,104 @@ function Dashboard({ onLogout }) {
               : waStatus.status === 'WAITING_QR' ? { text: 'QR', tone: 'warn' } : { text: 'Offline', tone: 'muted' };
             const isRestaurant = (sub) => activeTab === 'restaurant' && restaurantSubTab === sub;
             const goRestaurant = (sub) => { setRestaurantSubTab(sub); navigateTo('restaurant'); };
+            const isInventory = (sub) => activeTab === 'inventory' && inventorySubTab === sub;
+            const goInventory = (sub) => { setInventorySubTab(sub); navigateTo('inventory'); };
             const isFinance = (sub) => activeTab === 'finance' && financeSubTab === sub;
             const goFinance = (sub) => { setFinanceSubTab(sub); navigateTo('finance'); };
+            const isInvoice = (sub) => activeTab === 'invoicing' && invoicingSubTab === sub;
+            const goInvoicing = (sub) => { setInvoicingSubTab(sub); navigateTo('invoicing'); };
+            const isIot = (sub) => activeTab === 'iot_printing' && iotSubTab === sub;
+            const goIot = (sub) => { setIotSubTab(sub); navigateTo('iot_printing'); };
+            const isServices = (sub) => activeTab === 'services' && servicesSubTab === sub;
+            const goServices = (sub) => { setServicesSubTab(sub); navigateTo('services'); };
+            const isLoyalty = (sub) => activeTab === 'loyalty' && loyaltySubTab === sub;
+            const goLoyalty = (sub) => { setLoyaltySubTab(sub); navigateTo('loyalty'); };
+            const ARM_GROUPS = new Set(['service', 'agent', 'knowledge']);
             const groups = [
-              {
-                id: 'knowledge', label: 'Conocimiento', icon: BookOpen,
+              installedModules.includes('loyalty') && {
+                id: 'loyalty', label: 'Tarjetas de Fidelidad', icon: CreditCard,
                 items: [
-                  { tab: 'library', label: 'Base de conocimiento', icon: BookOpen, badge: stats.total_db_items },
-                  { tab: 'add-text', label: 'Redactar documento', icon: PlusCircle },
-                  { tab: 'scrape', label: 'Rastreador web', icon: Globe }
+                  { label: 'Caja', icon: Coins, active: isLoyalty('pos'), onClick: () => goLoyalty('pos') },
+                  { label: 'QR impreso', icon: QrCode, active: isLoyalty('kiosk'), onClick: () => goLoyalty('kiosk') },
+                  { label: 'Tarjetas', icon: CreditCard, active: isLoyalty('cards'), onClick: () => goLoyalty('cards') },
+                  { label: 'Programas', icon: Settings, active: isLoyalty('programs'), onClick: () => goLoyalty('programs') },
+                  { label: 'Recompensas', icon: Sparkles, active: isLoyalty('rewards'), onClick: () => goLoyalty('rewards') },
+                  { label: 'Reportes', icon: BarChart3, active: isLoyalty('stats'), onClick: () => goLoyalty('stats') },
+                  { label: 'Guía de uso', icon: LifeBuoy, active: isLoyalty('guide'), onClick: () => goLoyalty('guide') }
+                ]
+              },
+              installedModules.includes('restaurant') && {
+                id: 'restaurant', label: 'Restaurante', icon: UtensilsCrossed,
+                items: [
+                  { label: 'Tablero', icon: Kanban, active: isRestaurant('kanban'), onClick: () => goRestaurant('kanban') },
+                  { label: 'Historial de Pedidos', icon: ClipboardList, active: isRestaurant('orders'), onClick: () => goRestaurant('orders') },
+                  { label: 'Menú', icon: UtensilsCrossed, active: isRestaurant('menu'), onClick: () => goRestaurant('menu') },
+                  { label: 'Estadísticas', icon: BarChart3, active: isRestaurant('stats'), onClick: () => goRestaurant('stats') },
+                  { label: 'Configuración', icon: Settings, active: isRestaurant('settings'), onClick: () => goRestaurant('settings') },
+                  { label: 'Guía de uso', icon: LifeBuoy, active: isRestaurant('guide'), onClick: () => goRestaurant('guide') }
+                ]
+              },
+              installedModules.includes('inventory') && {
+                id: 'inventory', label: 'Inventario & Insumos', icon: Package,
+                items: [
+                  { label: 'Existencias & Stock', icon: Package, active: isInventory('stock'), onClick: () => goInventory('stock') },
+                  { label: 'Recetas & Escandallo', icon: ChefHat, active: isInventory('recipes'), onClick: () => goInventory('recipes') },
+                  { label: 'Compras & Entradas', icon: ShoppingBag, active: isInventory('purchases'), onClick: () => goInventory('purchases') },
+                  { label: 'Mermas & Bajas', icon: Trash2, active: isInventory('waste'), onClick: () => goInventory('waste') },
+                  { label: 'Kardex / Movimientos', icon: ArrowLeftRight, active: isInventory('kardex'), onClick: () => goInventory('kardex') },
+                  { label: 'Guía de uso', icon: LifeBuoy, active: isInventory('guide'), onClick: () => goInventory('guide') }
+                ]
+              },
+              installedModules.includes('finance') && {
+                id: 'finance', label: 'Caja & Finanzas', icon: Wallet,
+                items: [
+                  { label: 'Turno & Arqueo', icon: Coins, active: isFinance('shift'), onClick: () => goFinance('shift') },
+                  { label: 'Historial Cortes', icon: Receipt, active: isFinance('shifts_history'), onClick: () => goFinance('shifts_history') },
+                  { label: 'Movimientos', icon: ArrowLeftRight, active: isFinance('transactions'), onClick: () => goFinance('transactions') },
+                  { label: 'Reportes', icon: TrendingUp, active: isFinance('reports'), onClick: () => goFinance('reports') },
+                  { label: 'Categorías', icon: Tags, active: isFinance('categories'), onClick: () => goFinance('categories') },
+                  { label: 'Bitácora', icon: ScrollText, active: isFinance('audit'), onClick: () => goFinance('audit') },
+                  { label: 'Guía de uso', icon: LifeBuoy, active: isFinance('guide'), onClick: () => goFinance('guide') }
+                ]
+              },
+              installedModules.includes('invoicing') && {
+                id: 'invoicing', label: 'Facturación & DTE', icon: Receipt,
+                items: [
+                  { label: 'Comprobantes Emitidos', icon: FileText, active: isInvoice('invoices'), onClick: () => goInvoicing('invoices') },
+                  { label: 'Nueva Factura / DTE', icon: PlusCircle, active: isInvoice('new'), onClick: () => goInvoicing('new') },
+                  { label: 'Configuración Hacienda SV', icon: Settings, active: isInvoice('config'), onClick: () => goInvoicing('config') },
+                  { label: 'Guía de uso', icon: LifeBuoy, active: isInvoice('guide'), onClick: () => goInvoicing('guide') }
+                ]
+              },
+              installedModules.includes('iot_printing') && {
+                id: 'iot_printing', label: 'Impresión IoT', icon: Printer,
+                items: [
+                  { label: 'Impresoras Registradas', icon: Printer, active: isIot('printers'), onClick: () => goIot('printers') },
+                  { label: 'Historial de Trabajos', icon: ScrollText, active: isIot('logs'), onClick: () => goIot('logs') },
+                  { label: 'Guía de uso', icon: LifeBuoy, active: isIot('guide'), onClick: () => goIot('guide') }
+                ]
+              },
+              installedModules.includes('services') && {
+                id: 'services', label: 'Servicios Profesionales', icon: Briefcase,
+                items: [
+                  { label: 'Servicios', icon: Briefcase, active: isServices('services'), onClick: () => goServices('services') },
+                  { label: 'Leads / CRM', icon: Users, active: isServices('leads'), onClick: () => goServices('leads') },
+                  { label: 'Propuestas', icon: FileText, active: isServices('proposals'), onClick: () => goServices('proposals') },
+                  { label: 'Estadísticas', icon: BarChart3, active: isServices('stats'), onClick: () => goServices('stats') },
+                  { label: 'Configuración', icon: Settings, active: isServices('settings') || isServices('config'), onClick: () => goServices('settings') },
+                  { label: 'Guía de uso', icon: LifeBuoy, active: isServices('guide'), onClick: () => goServices('guide') }
+                ]
+              },
+              {
+                id: 'service', label: 'Atención al cliente', icon: MessageCircle,
+                indicator: activeHandoffs.length > 0
+                  ? <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={`${activeHandoffs.length} con IA pausada`} />
+                  : null,
+                items: [
+                  { label: 'Bandeja', icon: MessagesSquare, active: activeTab === 'inbox', onClick: () => navigateTo('inbox'), badge: activeHandoffs.length > 0 ? { text: activeHandoffs.length, tone: 'warn' } : undefined },
+                  { label: 'Clientes', icon: Users, active: activeTab === 'customers', onClick: () => { setCustomerId(null); navigateTo('customers'); } },
+                  { tab: 'whatsapp', label: 'WhatsApp', icon: MessageCircle, badge: waBadge },
+                  { tab: 'handoffs', label: 'IA pausada', icon: UserCheck, badge: activeHandoffs.length > 0 ? { text: activeHandoffs.length, tone: 'warn' } : 0 }
                 ]
               },
               {
@@ -1547,59 +1973,38 @@ function Dashboard({ onLogout }) {
                 ]
               },
               {
-                id: 'service', label: 'Atención al cliente', icon: MessageCircle,
-                indicator: activeHandoffs.length > 0
-                  ? <span className="w-1.5 h-1.5 rounded-full bg-amber-400" title={`${activeHandoffs.length} con IA pausada`} />
-                  : null,
+                id: 'knowledge', label: 'Conocimiento', icon: BookOpen,
                 items: [
-                  { label: 'Bandeja', icon: MessagesSquare, active: activeTab === 'inbox', onClick: () => navigateTo('inbox'), badge: activeHandoffs.length > 0 ? { text: activeHandoffs.length, tone: 'warn' } : undefined },
-                  { label: 'Clientes', icon: Users, active: activeTab === 'customers', onClick: () => { setCustomerId(null); navigateTo('customers'); } },
-                  { tab: 'whatsapp', label: 'WhatsApp', icon: MessageCircle, badge: waBadge },
-                  { tab: 'handoffs', label: 'IA pausada', icon: UserCheck, badge: activeHandoffs.length > 0 ? { text: activeHandoffs.length, tone: 'warn' } : 0 }
-                ]
-              },
-              installedModules.includes('restaurant') && {
-                id: 'restaurant', label: 'Restaurante', icon: UtensilsCrossed,
-                items: [
-                  { label: 'Tablero Kanban', icon: Kanban, active: isRestaurant('kanban'), onClick: () => goRestaurant('kanban') },
-                  { label: 'Historial de Pedidos', icon: ClipboardList, active: isRestaurant('orders'), onClick: () => goRestaurant('orders') },
-                  { label: 'Menú', icon: UtensilsCrossed, active: isRestaurant('menu'), onClick: () => goRestaurant('menu') },
-                  { label: 'Estadísticas', icon: BarChart3, active: isRestaurant('stats'), onClick: () => goRestaurant('stats') },
-                  { label: 'Configuración', icon: Settings, active: isRestaurant('settings'), onClick: () => goRestaurant('settings') },
-                  { label: 'Guía de uso', icon: LifeBuoy, active: isRestaurant('guide'), onClick: () => goRestaurant('guide') }
-                ]
-              },
-              installedModules.includes('finance') && {
-                id: 'finance', label: 'Caja & Finanzas', icon: Wallet,
-                items: [
-                  { label: 'Turno & Arqueo', icon: Coins, active: isFinance('shift'), onClick: () => goFinance('shift') },
-                  { label: 'Historial Cortes', icon: Receipt, active: isFinance('shifts_history'), onClick: () => goFinance('shifts_history') },
-                  { label: 'Movimientos', icon: ArrowLeftRight, active: isFinance('transactions'), onClick: () => goFinance('transactions') },
-                  { label: 'Reportes', icon: TrendingUp, active: isFinance('reports'), onClick: () => goFinance('reports') },
-                  { label: 'Categorías', icon: Tags, active: isFinance('categories'), onClick: () => goFinance('categories') },
-                  { label: 'Bitácora', icon: ScrollText, active: isFinance('audit'), onClick: () => goFinance('audit') },
-                  { label: 'Guía de uso', icon: LifeBuoy, active: isFinance('guide'), onClick: () => goFinance('guide') }
+                  { tab: 'library', label: 'Base de conocimiento', icon: BookOpen, badge: stats.total_db_items },
+                  { tab: 'add-text', label: 'Redactar documento', icon: PlusCircle },
+                  { tab: 'scrape', label: 'Rastreador web', icon: Globe }
                 ]
               },
               {
                 id: 'system', label: 'Configuración', icon: Settings,
-                items: [
+                items: canManageUsers() ? [
                   { tab: 'settings', label: 'Identidad e IA', icon: Sparkles },
-                  { tab: 'modules', label: 'Módulos', icon: Boxes }
+                  { tab: 'users', label: 'Usuarios', icon: UserPlus },
+                  // Solo el administrador de la plataforma agrega o quita módulos a una empresa
+                  ...(isSuperadmin() ? [{ tab: 'modules', label: 'Módulos', icon: Boxes }] : [])
+                ] : [
+                  { tab: 'settings', label: 'Identidad e IA', icon: Sparkles }
                 ]
               }
-            ].filter(Boolean);
+            ].filter(Boolean).filter(g => hasArm || !ARM_GROUPS.has(g.id));
 
             return (
               <>
-                <NavItem
-                  icon={MessageSquare}
-                  label="Simulador de chat"
-                  active={activeTab === 'chat'}
-                  onClick={() => navigateTo('chat')}
-                  themeColor={themeColor}
-                />
-                <div className="h-2" />
+                {isSuperadmin() && (
+                  <NavItem
+                    icon={Building2}
+                    label="Empresas"
+                    active={activeTab === 'tenants'}
+                    onClick={() => navigateTo('tenants')}
+                    themeColor={themeColor}
+                  />
+                )}
+                <div className="h-1.5" />
                 {groups.map(group => {
                   const items = group.items.map(item => ({
                     ...item,
@@ -1625,6 +2030,16 @@ function Dashboard({ onLogout }) {
                     </NavGroup>
                   );
                 })}
+                <div className="h-2" />
+                {hasArm && (
+                  <NavItem
+                    icon={MessageSquare}
+                    label="Simulador de chat"
+                    active={activeTab === 'chat'}
+                    onClick={() => navigateTo('chat')}
+                    themeColor={themeColor}
+                  />
+                )}
               </>
             );
           })()}
@@ -1632,6 +2047,7 @@ function Dashboard({ onLogout }) {
 
         {/* Footer Sidebar */}
         <div className="p-2 border-t border-[#2e2e2e] flex items-center gap-1">
+          {hasArm && (
           <a
             href="http://localhost:3000/qr"
             target="_blank"
@@ -1641,6 +2057,7 @@ function Dashboard({ onLogout }) {
           >
             <QrCode size={14} /> QR
           </a>
+          )}
           <a
             href={`${API_BASE}/docs`}
             target="_blank"
@@ -1672,7 +2089,95 @@ function Dashboard({ onLogout }) {
               <Menu size={18} />
             </button>
             <div className="flex items-center gap-2 text-sm">
-              <span className="text-zinc-500 font-medium">{stats.company || 'Zenith Platform'}</span>
+              {isSuperadmin() ? (
+                <div className="relative">
+                  <button
+                    onClick={() => {
+                      setTenantDropdownOpen(v => !v);
+                      if (!tenantDropdownOpen) {
+                        apiFetch(`${API_BASE}/api/tenants`)
+                          .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+                          .then(d => setHeaderTenants(d.tenants || []))
+                          .catch(err => showToast('No se pudo cargar la lista de empresas: ' + err.message, true));
+                      }
+                    }}
+                    className="flex items-center gap-1.5 px-2.5 py-1 bg-[#171717] hover:bg-zinc-800 border border-[#2e2e2e] hover:border-zinc-700 rounded-md text-xs font-semibold text-zinc-100 transition-colors shadow-sm"
+                    title="Conmutar empresa (Multi-Tenant)"
+                  >
+                    <Building2 size={13} className="text-emerald-400 shrink-0" />
+                    {stats.company ? (
+                      <span className="max-w-[130px] truncate">{stats.company}</span>
+                    ) : (
+                      <span className="inline-block w-20 h-3 bg-zinc-800 rounded animate-pulse" />
+                    )}
+                    <ChevronDown size={12} className="text-zinc-500 shrink-0" />
+                  </button>
+
+                  {tenantDropdownOpen && (
+                    <>
+                      <div className="fixed inset-0 z-40" onClick={() => setTenantDropdownOpen(false)} />
+                      <div className="absolute left-0 mt-1.5 w-72 bg-[#171717] border border-[#2e2e2e] rounded-lg shadow-2xl py-1.5 z-50 animate-fadeIn">
+                        <div className="px-3 py-1.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider border-b border-[#242424]">
+                          Empresas
+                        </div>
+                        <div className="max-h-60 overflow-y-auto divide-y divide-[#242424]">
+                          {headerTenants.map(t => {
+                            const isCurrent = (getActingTenant() || 'default') === t.slug;
+                            return (
+                              <button
+                                key={t.slug}
+                                onClick={() => {
+                                  setTenantDropdownOpen(false);
+                                  if (isCurrent) return;
+                                  const targetSlug = t.slug === 'default' ? '' : t.slug;
+                                  setActingTenant(targetSlug);
+                                  // Al cambiar de empresa se abre la misma pantalla raíz (sin ids de otra empresa)
+                                  const tabToKeep = activeTab === 'tenants' ? 'library' : activeTab;
+                                  const nextUrl = buildPath(tabToKeep, null, targetSlug);
+                                  window.location.assign(nextUrl);
+                                }}
+                                className={`w-full px-3 py-2 text-left text-xs flex items-center justify-between hover:bg-zinc-800 transition-colors ${
+                                  isCurrent ? 'bg-zinc-800/80 text-emerald-300 font-medium' : 'text-zinc-300'
+                                }`}
+                              >
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <span
+                                    className={`w-2 h-2 rounded-full shrink-0 ${
+                                      t.active ? 'bg-emerald-400' : 'bg-zinc-600'
+                                    }`}
+                                  />
+                                  <span className="truncate">{t.name}</span>
+                                  {t.slug === 'default' && (
+                                    <span className="text-[10px] text-zinc-500 font-mono">(principal)</span>
+                                  )}
+                                </div>
+                                {isCurrent && <Check size={13} className="text-emerald-400 shrink-0" />}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        <div className="p-1.5 pt-2 border-t border-[#262626]">
+                          <button
+                            onClick={() => {
+                              setTenantDropdownOpen(false);
+                              navigateTo('tenants');
+                            }}
+                            className="w-full text-center py-1 text-xs text-emerald-400 hover:text-emerald-300 font-medium hover:bg-emerald-500/10 rounded transition-colors"
+                          >
+                            Gestionar empresas
+                          </button>
+                        </div>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ) : (
+                stats.company ? (
+                  <span className="text-zinc-500 font-medium">{stats.company}</span>
+                ) : (
+                  <span className="inline-block w-20 h-3.5 bg-zinc-800 rounded animate-pulse" />
+                )
+              )}
               <span className="text-zinc-600">/</span>
               <span className="text-zinc-200 font-medium">
                 {ROUTES[activeTab]?.breadcrumb || 'Knowledge Base'}
@@ -1682,6 +2187,7 @@ function Dashboard({ onLogout }) {
 
           <div className="flex items-center gap-2">
             <div className="hidden sm:flex items-center gap-2">
+              {hasArm && (
               <button
                 onClick={() => navigateTo('whatsapp')}
                 className={`flex items-center gap-1.5 px-3 py-1 bg-[#1c1c1c] border rounded-full text-xs font-medium transition-all ${
@@ -1705,21 +2211,59 @@ function Dashboard({ onLogout }) {
                     : (waStatus.status === 'WAITING_QR' ? 'Vincular WhatsApp' : 'WhatsApp Offline')}
                 </span>
               </button>
+              )}
             </div>
 
-            <button
-              onClick={handleSyncCache}
-              disabled={isSyncing}
-              className="flex items-center gap-2 px-3 py-1.5 bg-[#1c1c1c] hover:bg-[#3ecf8e]/10 border border-[#2e2e2e] hover:border-[#3ecf8e] text-zinc-200 hover:text-[#3ecf8e] rounded-md text-[13px] font-medium transition-all"
-            >
-              <RefreshCw size={14} className={isSyncing ? 'animate-spin text-[#3ecf8e]' : ''} style={{ color: isSyncing ? themeColor : undefined }} />
-              <span>Sincronizar</span>
-            </button>
           </div>
         </header>
 
         {/* Content Container */}
         <main className="flex-1 w-full max-w-[1200px] mx-auto px-4 md:px-8 py-6 md:py-8">
+
+          {/* Banner de aviso cuando la empresa está desactivada */}
+          {stats.tenant_active === false && (
+            <div className="mb-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-fadeIn">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-amber-500/20 text-amber-400 shrink-0">
+                  <Power size={20} />
+                </div>
+                <div>
+                  <div className="font-semibold text-sm text-amber-200">
+                    Esta empresa ({stats.company || getActingTenant() || 'seleccionada'}) se encuentra desactivada
+                  </div>
+                  <div className="text-xs text-amber-300/80 mt-0.5">
+                    Sus pedidos, el bot de WhatsApp y la atención al cliente están suspendidos.
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                {isSuperadmin() ? (
+                  <>
+                    <button
+                      onClick={handleReactivateCurrentTenant}
+                      disabled={isReactivatingTenant}
+                      className="px-3 py-1.5 rounded-md bg-amber-500 hover:bg-amber-400 text-black text-xs font-semibold shadow transition-colors disabled:opacity-50"
+                    >
+                      {isReactivatingTenant ? 'Activando...' : 'Reactivar Empresa'}
+                    </button>
+                    <button
+                      onClick={() => { setActingTenant(''); window.location.assign('/tenants'); }}
+                      className="px-3 py-1.5 rounded-md border border-amber-500/40 hover:bg-amber-500/20 text-xs font-medium text-amber-300 transition-colors"
+                    >
+                      Volver a Empresas
+                    </button>
+                  </>
+                ) : (
+                  <button
+                    onClick={onLogout}
+                    className="px-3 py-1.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium"
+                  >
+                    Cerrar Sesión
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
 
           {/* ==============================================================
               TAB 1: BASE DE CONOCIMIENTO (LIBRARY)
@@ -1729,7 +2273,9 @@ function Dashboard({ onLogout }) {
               <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
                 <div>
                   <h1 className="text-xl font-medium tracking-tight text-zinc-100">Base de conocimiento</h1>
-                  <p className="text-sm text-zinc-400 mt-1 max-w-2xl">La única fuente de información que usa la IA para responder a tus clientes.</p>
+                  <p className="text-sm text-zinc-400 mt-1 max-w-2xl">
+                    La IA responde a tus clientes basándose únicamente en estos datos.
+                  </p>
                 </div>
               </div>
               {/* Metric Row */}
@@ -1905,8 +2451,14 @@ function Dashboard({ onLogout }) {
           {activeTab === 'add-text' && (
             <div className="max-w-3xl mx-auto space-y-6 animate-fadeIn">
               <div>
-                <h1 className="text-xl font-medium tracking-tight text-zinc-100">Nuevo Documento de Conocimiento</h1>
-                <p className="text-sm text-zinc-400 mt-1">Ingresa especificaciones técnicas, políticas de garantía, precios o manuales operativos.</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h1 className="text-xl font-medium tracking-tight text-zinc-100">Nuevo Documento de Conocimiento</h1>
+                  <span className="inline-flex items-center gap-1.5 text-xs px-2.5 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 font-medium">
+                    <Building2 size={12} />
+                    <span>Empresa destino: {stats.company || 'Empresa Principal'}</span>
+                  </span>
+                </div>
+                <p className="text-sm text-zinc-400 mt-1">Este conocimiento se guardará de forma individual y aislada exclusivamente para <strong>{stats.company || 'esta empresa'}</strong>.</p>
               </div>
 
               <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md">
@@ -2306,13 +2858,17 @@ function Dashboard({ onLogout }) {
                       </span>
                     )}
                     <button
-                      onClick={() => setMessages([{
-                        role: 'assistant',
-                        text: stats.welcome_message || '¡Hola! Soy tu Asistente Operativo. Pregúntame sobre los servicios, garantías, precios o cualquier dato indexado en la base de datos.',
-                        isCustomized: true
-                      }])}
+                      onClick={async () => {
+                        try {
+                          await apiFetch(`${API_BASE}/sessions/react-playground-session`, { method: 'DELETE' });
+                        } catch (e) {
+                          console.warn('Error reiniciando sesión en backend', e);
+                        }
+                        setMessages([]);
+                        showToast('Conversación de prueba reiniciada');
+                      }}
                       className="px-3 py-1 bg-zinc-800/60 hover:bg-zinc-800 border border-[#2e2e2e] rounded-md text-[11px] text-zinc-300 transition-colors"
-                      title="Reiniciar conversación"
+                      title="Reiniciar conversación y memoria de prueba"
                     >
                       Reiniciar
                     </button>
@@ -2341,6 +2897,17 @@ function Dashboard({ onLogout }) {
 
                 {/* Messages Box */}
                 <div className="flex-1 p-2 overflow-y-auto space-y-2">
+                  {messages.length === 0 && (
+                    <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center p-6 text-zinc-500">
+                      <div className="w-12 h-12 rounded-full bg-[#181818] border border-[#2e2e2e] flex items-center justify-center mb-3 text-zinc-400">
+                        <Bot size={22} style={{ color: themeColor }} />
+                      </div>
+                      <h4 className="text-sm font-medium text-zinc-300">Playground de Conversación</h4>
+                      <p className="text-xs text-zinc-500 max-w-sm mt-1">
+                        Escribe un mensaje o envía un audio para probar la atención humana y natural de tu agente.
+                      </p>
+                    </div>
+                  )}
                   {messages.map((m, idx) => (
                     <div key={idx} className={`flex items-start gap-2 ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                       {m.role === 'assistant' && (
@@ -2581,7 +3148,7 @@ function Dashboard({ onLogout }) {
                         </div>
                         <div>
                           <h2 className="text-base font-medium text-zinc-100">Estado de la Sesión</h2>
-                          <p className="text-xs text-zinc-400">Microservicio Socket Baileys</p>
+                          <p className="text-xs text-zinc-400">Línea de WhatsApp de: <strong className="text-zinc-200">{stats.company || 'Empresa Principal'}</strong></p>
                         </div>
                       </div>
 
@@ -2732,7 +3299,7 @@ function Dashboard({ onLogout }) {
                         {/* Instrucciones de Escaneo */}
                         <div className="p-2 bg-[#232323] border border-[#2e2e2e] rounded-md text-left space-y-2">
                           <span className="text-xs font-medium text-zinc-300 block">
-                            ¿Cómo vincular tu WhatsApp?
+                            ¿Cómo vincular el WhatsApp de {stats.company || 'esta empresa'}?
                           </span>
                           <div className="space-y-2 text-xs text-zinc-300 leading-relaxed">
                             <div className="flex items-start gap-2">
@@ -2748,6 +3315,27 @@ function Dashboard({ onLogout }) {
                               <span>Toca <strong>Vincular un dispositivo</strong> y apunta tu cámara al código QR de arriba.</span>
                             </div>
                           </div>
+                        </div>
+                      </div>
+                    ) : waStatus.status === 'UNREACHABLE' || waStatus.status === 'NOT_CONFIGURED' ? (
+                      <div className="py-4 text-center space-y-3">
+                        <AlertCircle size={38} className="mx-auto text-amber-400" />
+                        <div>
+                          <h3 className="text-base font-semibold text-zinc-100">
+                            Gateway de WhatsApp No Disponible
+                          </h3>
+                          <p className="text-xs text-zinc-400 mt-1 max-w-sm mx-auto">
+                            No se pudo contactar con el microservicio Baileys. Si esta sucursal usa su propio gateway, verifica que su contenedor esté corriendo.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
+                          <button
+                            onClick={fetchWhatsAppStatus}
+                            className="px-3.5 py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-200 text-xs font-medium rounded-md border border-[#2e2e2e] transition-all flex items-center gap-1.5"
+                          >
+                            <RefreshCw size={13} className={isRefreshingWa ? 'animate-spin' : ''} />
+                            <span>Reintentar Conexión</span>
+                          </button>
                         </div>
                       </div>
                     ) : (
@@ -2907,6 +3495,31 @@ function Dashboard({ onLogout }) {
                     style={{ backgroundColor: themeColor }}
                   >
                     Configurar IA del restaurante
+                  </button>
+                </div>
+              )}
+
+              {installedModules.includes('services') && (
+                <div
+                  className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 p-2 rounded-md border"
+                  style={{ backgroundColor: `rgba(${themeRgb}, 0.06)`, borderColor: `rgba(${themeRgb}, 0.25)` }}
+                >
+                  <div className="flex items-start gap-2">
+                    <Briefcase size={20} style={{ color: themeColor }} className="mt-0.5 shrink-0" />
+                    <div>
+                      <p className="text-sm font-medium text-zinc-100">Módulo Servicios Profesionales activo en la IA</p>
+                      <p className="text-xs text-zinc-400 mt-0.5">
+                        El asistente conoce tu catálogo de servicios, cotizaciones y califica prospectos comerciales.
+                      </p>
+                    </div>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => { setServicesSubTab('settings'); navigateTo('services'); }}
+                    className="px-3 py-1.5 rounded-md text-[13px] font-medium text-black whitespace-nowrap hover:brightness-110"
+                    style={{ backgroundColor: themeColor }}
+                  >
+                    Configurar IA de servicios
                   </button>
                 </div>
               )}
@@ -3205,29 +3818,6 @@ function Dashboard({ onLogout }) {
                       <span className="text-[11px] text-zinc-500 mt-1 block">URL oficial referenciada por el bot en cotizaciones y consultas.</span>
                     </div>
                   </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-300 mb-2">Tono y Personalidad</label>
-                    <textarea
-                      rows={2}
-                      value={settingsForm.bot_tone}
-                      onChange={e => setSettingsForm(prev => ({ ...prev, bot_tone: e.target.value }))}
-                      placeholder="Ej: Profesional, cálido, resolutivo y empático. Adaptado al español de El Salvador."
-                      className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-300 mb-2">Directrices Especiales & Reglas de la Marca</label>
-                    <textarea
-                      rows={3}
-                      value={settingsForm.brand_instructions}
-                      onChange={e => setSettingsForm(prev => ({ ...prev, brand_instructions: e.target.value }))}
-                      placeholder="Ej: Resaltar nuestra garantía de 12 meses. Si preguntan por proyectos a medida, solicitar su WhatsApp o correo para seguimiento..."
-                      className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
-                    />
-                    <span className="text-[11px] text-zinc-500 mt-1 block">Inyectado en tiempo real en las directrices del System Prompt de IA.</span>
-                  </div>
                 </div>
 
                 {/* ==========================================
@@ -3338,47 +3928,41 @@ function Dashboard({ onLogout }) {
                         </div>
                       )}
                     </div>
+
+                    <div className="pt-3 border-t border-[#2e2e2e]">
+                      <label className="block text-xs font-medium text-zinc-300 mb-2">Mensaje de Transferencia a Humano</label>
+                      <textarea
+                        rows={2}
+                        value={settingsForm.transfer_message}
+                        onChange={e => setSettingsForm(prev => ({ ...prev, transfer_message: e.target.value }))}
+                        placeholder="Ej: He notificado a nuestro equipo humano. En unos momentos uno de nuestros especialistas continuará tu atención por este chat."
+                        className="w-full px-3 py-2 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
+                      />
+                      <span className="text-[11px] text-zinc-500 mt-1 block">Respuesta automática enviada cuando el cliente solicita comunicarse con un asesor real.</span>
+                    </div>
                   </div>
                 </div>
 
                 {/* ==========================================
-                    SECCIÓN 4: MENSAJES AUTOMATIZADOS
+                    SECCIÓN 4: PERSONALIDAD COMERCIAL & MÓDULOS
                     ========================================== */}
                 <div className="p-4 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md space-y-2">
                   <div className="flex items-center gap-2 text-zinc-200 font-medium text-base pb-2 border-b border-[#2e2e2e]">
-                    <MessageCircle size={18} style={{ color: themeColor }} />
-                    <span>Mensajes Automatizados del Asistente</span>
+                    <Layers size={18} style={{ color: themeColor }} />
+                    <span>Personalidad Comercial & Módulos</span>
                   </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-300 mb-2">Mensaje de Bienvenida (Saludo Inicial)</label>
-                      <textarea
-                        rows={3}
-                        value={settingsForm.welcome_message}
-                        onChange={e => setSettingsForm(prev => ({ ...prev, welcome_message: e.target.value }))}
-                        placeholder="Ej: ¡Hola! Bienvenido a Fantasma Digital. Soy tu Asistente Operativo. ¿En qué te puedo asesorar hoy?"
-                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
-                      />
-                      <span className="text-[11px] text-zinc-500 mt-1 block">Saludo predeterminado del asistente para cualquier tipo de negocio (Playground y nuevos chats de WhatsApp).</span>
-                      {stats?.welcome_source && stats.welcome_source !== 'profile' && (
-                        <span className="text-[11px] mt-1.5 block px-2 py-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 text-amber-300">
-                          ⚠️ Ahora mismo se usa el saludo del módulo «{stats.welcome_source_name}», que reemplaza a este. Si lo dejas vacío allá, se usará este.
-                        </span>
-                      )}
-                    </div>
-
-                    <div>
-                      <label className="block text-xs font-medium text-zinc-300 mb-2">Mensaje de Transferencia a Humano</label>
-                      <textarea
-                        rows={3}
-                        value={settingsForm.transfer_message}
-                        onChange={e => setSettingsForm(prev => ({ ...prev, transfer_message: e.target.value }))}
-                        placeholder="Ej: He notificado a nuestro equipo humano. En unos momentos uno de nuestros especialistas continuará tu atención por este chat."
-                        className="w-full px-3 py-2 bg-[#141414] border border-[#2e2e2e] rounded-md text-xs text-zinc-200 outline-none font-sans focus:border-zinc-500"
-                      />
-                      <span className="text-[11px] text-zinc-500 mt-1 block">Respuesta automática cuando el cliente solicita un agente humano.</span>
-                    </div>
+                  <div className="p-3 bg-[#141414] border border-[#242424] rounded-md flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                    <p className="text-xs text-zinc-400 leading-relaxed">
+                      El tono de atención, saludo inicial de ventas, catálogo y directrices comerciales se configuran dentro de tu módulo activo (<strong>Servicios Profesionales</strong>, <strong>Restaurante</strong>, etc.).
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setActiveTab('library')}
+                      className="px-3 py-1.5 rounded-md text-xs font-medium bg-[#232323] hover:bg-[#2a2a2a] text-zinc-200 border border-[#3e3e3e] transition-colors shrink-0 flex items-center gap-1.5 self-start sm:self-auto"
+                    >
+                      <Layers size={13} />
+                      <span>Gestionar Módulos</span>
+                    </button>
                   </div>
                 </div>
 
@@ -3826,8 +4410,50 @@ function Dashboard({ onLogout }) {
             {/* ==============================================================
                 TAB: GESTOR DE MÓDULOS (ECOSISTEMA TIPO ODOO)
                 ============================================================== */}
-            {activeTab === 'modules' && (
+            {activeTab === 'tenants' && isSuperadmin() && (
+              <TenantsPanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                actingTenant={getActingTenant()}
+                onOperate={(slug, targetTab) => {
+                  const targetSlug = slug === 'default' ? '' : slug;
+                  setActingTenant(targetSlug);
+                  const tab = ['library', 'whatsapp'].includes(targetTab) ? targetTab : 'restaurant';
+                  const path = buildPath(tab, null, targetSlug);
+                  window.location.assign(path);
+                }}
+                onTenantDeleted={(slug) => {
+                  // Si se estaba operando la empresa eliminada, volver a la plataforma
+                  if (getActingTenant() === slug) {
+                    setActingTenant('');
+                    window.location.assign('/tenants');
+                  }
+                }}
+                showToast={showToast}
+              />
+            )}
+
+            {activeTab === 'users' && canManageUsers() && (
+              <UsersPanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                showToast={showToast}
+                currentUserId={getCurrentUserId()}
+              />
+            )}
+
+            {activeTab === 'modules' && !isSuperadmin() && (
+              <div className="max-w-xl bg-[#171717] border border-[#2e2e2e] rounded-lg p-6 text-sm text-zinc-300 space-y-1">
+                <div className="font-medium text-zinc-100">Módulos gestionados por la plataforma</div>
+                <p className="text-zinc-400">Solo el administrador de la plataforma puede agregar o quitar módulos a tu empresa. Contáctalo si necesitas uno nuevo.</p>
+              </div>
+            )}
+
+            {activeTab === 'modules' && isSuperadmin() && (
               <ModulesPanel
+                targetTenant={getActingTenant() || 'default'}
                 apiFetch={apiFetch}
                 apiBase={API_BASE}
                 themeColor={themeColor}
@@ -3854,6 +4480,10 @@ function Dashboard({ onLogout }) {
                 showToast={showToast}
                 initialSubTab={restaurantSubTab}
                 onSubTabChange={setRestaurantSubTab}
+                isInventoryInstalled={installedModules.includes('inventory')}
+                isInvoicingInstalled={installedModules.includes('invoicing')}
+                isIotInstalled={installedModules.includes('iot_printing')}
+                onNavigateToInventory={() => { setInventorySubTab('stock'); navigateTo('inventory'); }}
               />
             )}
             {/* TAB: CAJA & FINANZAS (MÓDULO OFICIAL - SOLO SI ESTÁ INSTALADO) */}
@@ -3901,6 +4531,72 @@ function Dashboard({ onLogout }) {
                 showToast={showToast}
                 subTab={financeSubTab}
                 setSubTab={setFinanceSubTab}
+              />
+            )}
+            {activeTab === 'inventory' && installedModules.includes('inventory') && inventorySubTab === 'guide' && (
+              <ModuleGuide manifest={moduleManifests.inventory} themeColor={themeColor} onOpenSection={setInventorySubTab} />
+            )}
+            {activeTab === 'inventory' && installedModules.includes('inventory') && inventorySubTab !== 'guide' && (
+              <InventoryPanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                themeRgb={themeRgb}
+                showToast={showToast}
+                subTab={inventorySubTab}
+                setSubTab={setInventorySubTab}
+                navigateTo={navigateTo}
+              />
+            )}
+            {activeTab === 'loyalty' && installedModules.includes('loyalty') && loyaltySubTab === 'guide' && (
+              <ModuleGuide manifest={moduleManifests.loyalty} themeColor={themeColor} onOpenSection={() => setLoyaltySubTab('pos')} />
+            )}
+            {activeTab === 'loyalty' && installedModules.includes('loyalty') && loyaltySubTab !== 'guide' && (
+              <LoyaltyPanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                showToast={showToast}
+                subTab={loyaltySubTab}
+                setSubTab={setLoyaltySubTab}
+                tenantSlug={getActingTenant() || getStoredAuth().tenant || 'default'}
+                companyName={stats.company}
+              />
+            )}
+            {activeTab === 'invoicing' && installedModules.includes('invoicing') && invoicingSubTab === 'guide' && (
+              <ModuleGuide manifest={moduleManifests.invoicing} themeColor={themeColor} onOpenSection={setInvoicingSubTab} />
+            )}
+            {activeTab === 'invoicing' && installedModules.includes('invoicing') && invoicingSubTab !== 'guide' && (
+              <InvoicingPanel
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                subTab={invoicingSubTab}
+                setSubTab={setInvoicingSubTab}
+                isIotInstalled={installedModules.includes('iot_printing')}
+              />
+            )}
+            {activeTab === 'iot_printing' && installedModules.includes('iot_printing') && iotSubTab === 'guide' && (
+              <ModuleGuide manifest={moduleManifests.iot_printing} themeColor={themeColor} onOpenSection={setIotSubTab} />
+            )}
+            {activeTab === 'iot_printing' && installedModules.includes('iot_printing') && iotSubTab !== 'guide' && (
+              <IotPrintingPanel
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                subTab={iotSubTab}
+                setSubTab={setIotSubTab}
+              />
+            )}
+            {activeTab === 'services' && installedModules.includes('services') && servicesSubTab === 'guide' && (
+              <ModuleGuide manifest={moduleManifests.services} themeColor={themeColor} onOpenSection={setServicesSubTab} />
+            )}
+            {activeTab === 'services' && installedModules.includes('services') && servicesSubTab !== 'guide' && (
+              <ServicesPanel
+                apiFetch={apiFetch}
+                apiBase={API_BASE}
+                themeColor={themeColor}
+                showToast={showToast}
+                subTab={servicesSubTab}
+                setSubTab={setServicesSubTab}
               />
             )}
         </main>
@@ -4506,25 +5202,43 @@ const readableTextOn = (hex) => {
 
 function LoginScreen({ onLogin }) {
   const [password, setPassword] = useState('');
+  // Correo o teléfono del usuario; vacío = contraseña de la empresa (propietario)
+  const [username, setUsername] = useState(() => {
+    try { return localStorage.getItem('zenith_login_username') || ''; } catch { return ''; }
+  });
+  // Empresa: ?empresa=slug en la URL > la última usada > vacío (empresa principal)
+  const [tenant, setTenant] = useState(() => {
+    try {
+      const fromUrl = new URLSearchParams(window.location.search).get('empresa');
+      return (fromUrl || localStorage.getItem(TENANT_STORAGE_KEY) || '').trim().toLowerCase();
+    } catch { return ''; }
+  });
   const [showPassword, setShowPassword] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  // Acceso con la contraseña de una empresa (propietario, sin usuario personal)
+  const [ownerMode, setOwnerMode] = useState(false);
+  // Empresas entre las que elegir cuando la cuenta pertenece a varias
+  const [choices, setChoices] = useState(null);
   // La marca se guarda en el navegador para que la pantalla aparezca con el logo y color correctos al instante
   const [brand, setBrand] = useState(() => {
     try { return JSON.parse(localStorage.getItem(BRANDING_CACHE_KEY) || 'null'); } catch { return null; }
   });
 
   useEffect(() => {
-    fetch(`${API_BASE}/api/public/branding`)
-      .then(res => (res.ok ? res.json() : null))
-      .then(data => {
-        if (!data) return;
-        setBrand(data);
-        try { localStorage.setItem(BRANDING_CACHE_KEY, JSON.stringify(data)); } catch { /* sin espacio: no importa */ }
-      })
-      .catch(() => {});
-  }, []);
+    const timer = setTimeout(() => {
+      fetch(`${API_BASE}/api/public/branding?tenant=${encodeURIComponent(tenant)}`)
+        .then(res => (res.ok ? res.json() : null))
+        .then(data => {
+          if (!data) return;
+          setBrand(data);
+          try { localStorage.setItem(BRANDING_CACHE_KEY, JSON.stringify(data)); } catch { /* sin espacio: no importa */ }
+        })
+        .catch(() => {});
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [tenant]);
 
   const color = /^#[0-9a-f]{6}$/i.test(brand?.primary_color || '') ? brand.primary_color : '#3ecf8e';
   const rgb = hexToRgb(color);
@@ -4538,8 +5252,7 @@ function LoginScreen({ onLogin }) {
     document.documentElement.style.setProperty('--theme-primary-rgb', rgb);
   }, [company, color, rgb]);
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const submitLogin = async (chosenTenant = '') => {
     if (!password) return;
     setLoading(true);
     setError('');
@@ -4547,21 +5260,44 @@ function LoginScreen({ onLogin }) {
       const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password })
+        // La empresa se deduce de la cuenta; solo se envía en modo propietario o al elegir entre varias
+        body: JSON.stringify({
+          password,
+          username: ownerMode ? '' : username.trim(),
+          tenant: ownerMode ? tenant : chosenTenant
+        })
       });
       const data = await res.json().catch(() => ({}));
+      if (res.status === 409 && data.detail?.code === 'choose_tenant') {
+        setChoices(data.detail.tenants || []);
+        return;
+      }
       if (!res.ok) {
-        setError(data.detail || 'No se pudo iniciar sesión.');
+        setError(typeof data.detail === 'string' ? data.detail : 'No se pudo iniciar sesión.');
         setPassword('');
+        setChoices(null);
         return;
       }
       storeToken(data);
+      const slug = data.tenant && data.tenant !== 'default' ? data.tenant : '';
+      try {
+        localStorage.setItem(TENANT_STORAGE_KEY, slug);
+        if (!ownerMode) localStorage.setItem('zenith_login_username', username.trim());
+        localStorage.removeItem(ACTING_TENANT_KEY);
+      } catch { /* ignorar */ }
+      // Llevar al usuario a SU empresa (la URL /:empresa/... define la empresa que ve el panel)
+      window.history.replaceState(null, '', data.superadmin ? '/' : (slug ? `/${slug}/knowledge-base` : '/knowledge-base'));
       onLogin();
     } catch {
       setError('No se pudo conectar con el servidor. Revisa que el backend esté encendido.');
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    submitLogin('');
   };
 
   return (
@@ -4586,9 +5322,61 @@ function LoginScreen({ onLogin }) {
           <p className="mt-1.5 text-sm text-zinc-400">Inicia sesión para administrar a {botName}.</p>
         </div>
 
+        {choices ? (
+          <div className="bg-[#171717] border border-[#2e2e2e] rounded-lg p-6 space-y-3">
+            <p className="text-sm text-zinc-200">Tu cuenta pertenece a varias empresas. ¿A cuál quieres entrar?</p>
+            {choices.map(c => (
+              <button
+                key={c.slug}
+                type="button"
+                disabled={loading}
+                onClick={() => submitLogin(c.slug)}
+                className="w-full flex items-center justify-between gap-3 bg-[#121212] border border-[#2e2e2e] hover:border-zinc-500 rounded-md px-3 py-2.5 text-left disabled:opacity-50"
+              >
+                <span className="text-sm text-zinc-100">{c.name}</span>
+                <span className="text-[12px] text-zinc-400">{c.role_label}</span>
+              </button>
+            ))}
+            <button type="button" onClick={() => { setChoices(null); setPassword(''); }} className="text-[13px] text-zinc-400 hover:text-white">
+              Volver
+            </button>
+          </div>
+        ) : (
         <form onSubmit={handleSubmit} className="bg-[#171717] border border-[#2e2e2e] rounded-lg p-6 space-y-4" noValidate>
+          {ownerMode ? (
+            <div className="space-y-1.5">
+              <label htmlFor="login-tenant" className="block text-[13px] text-zinc-300">Identificador de la empresa</label>
+              <input
+                id="login-tenant"
+                type="text"
+                value={tenant}
+                onChange={e => { setTenant(e.target.value.trim().toLowerCase()); if (error) setError(''); }}
+                autoComplete="organization"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder="identificador-de-tu-empresa"
+                className="w-full h-10 bg-[#121212] border border-[#2e2e2e] rounded-md px-3 text-sm outline-none transition-colors"
+              />
+            </div>
+          ) : (
+            <div className="space-y-1.5">
+              <label htmlFor="login-username" className="block text-[13px] text-zinc-300">Correo o WhatsApp</label>
+              <input
+                id="login-username"
+                type="text"
+                value={username}
+                onChange={e => { setUsername(e.target.value); if (error) setError(''); }}
+                autoComplete="username"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder="tu@correo.com · admin"
+                className="w-full h-10 bg-[#121212] border border-[#2e2e2e] rounded-md px-3 text-sm outline-none transition-colors"
+              />
+            </div>
+          )}
+
           <div className="space-y-1.5">
-            <label htmlFor="admin-password" className="block text-[13px] text-zinc-300">Contraseña de administrador</label>
+            <label htmlFor="admin-password" className="block text-[13px] text-zinc-300">{ownerMode ? 'Contraseña de la empresa' : 'Contraseña'}</label>
             <div className="relative">
               <input
                 id="admin-password"
@@ -4597,7 +5385,7 @@ function LoginScreen({ onLogin }) {
                 onChange={e => { setPassword(e.target.value); if (error) setError(''); }}
                 onKeyUp={e => setCapsLock(e.getModifierState?.('CapsLock') || false)}
                 onKeyDown={e => setCapsLock(e.getModifierState?.('CapsLock') || false)}
-                autoFocus
+                autoFocus={Boolean(username)}
                 autoComplete="current-password"
                 aria-invalid={!!error}
                 aria-describedby={error ? 'login-error' : undefined}
@@ -4631,7 +5419,16 @@ function LoginScreen({ onLogin }) {
             {loading && <RefreshCw size={14} className="animate-spin" />}
             {loading ? 'Verificando…' : 'Iniciar sesión'}
           </button>
+
+          <button
+            type="button"
+            onClick={() => { setOwnerMode(v => !v); setError(''); setPassword(''); }}
+            className="w-full text-center text-[12px] text-zinc-500 hover:text-zinc-300"
+          >
+            {ownerMode ? 'Entrar con mi correo o WhatsApp' : 'Entrar con la contraseña de una empresa'}
+          </button>
         </form>
+        )}
 
         <p className="mt-6 text-center text-[12px] text-zinc-500">
           La sesión dura 12 horas. Tras varios intentos fallidos el acceso se bloquea por unos minutos.
@@ -4645,7 +5442,173 @@ function LoginScreen({ onLogin }) {
   );
 }
 
+// ==============================================================
+// ACEPTAR INVITACIÓN (enlace ?invitacion=TOKEN enviado por WhatsApp o correo)
+// ==============================================================
+const getInviteToken = () => {
+  try { return new URLSearchParams(window.location.search).get('invitacion') || ''; } catch { return ''; }
+};
+
+function AcceptInviteScreen({ token, onDone }) {
+  const [info, setInfo] = useState(null);
+  const [loadError, setLoadError] = useState('');
+  const [name, setName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    fetch(`${API_BASE}/api/public/invitations/${encodeURIComponent(token)}`)
+      .then(async res => {
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.detail || 'La invitación no es válida.');
+        setInfo(data);
+        setName(data.name || '');
+      })
+      .catch(e => setLoadError(e.message || 'No se pudo conectar con el servidor.'));
+  }, [token]);
+
+  const brand = info?.branding || {};
+  const color = /^#[0-9a-f]{6}$/i.test(brand.primary_color || '') ? brand.primary_color : '#3ecf8e';
+  const rgb = hexToRgb(color);
+  const company = info?.tenant_name || brand.company_name || 'Zenith';
+
+  useEffect(() => {
+    document.title = `Invitación · ${company}`;
+    document.documentElement.style.setProperty('--theme-primary', color);
+    document.documentElement.style.setProperty('--theme-primary-rgb', rgb);
+  }, [company, color, rgb]);
+
+  const mismatch = confirm && password !== confirm;
+  const canSubmit = name.trim() && password.length >= 8 && password === confirm && !saving;
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    if (!canSubmit) return;
+    setSaving(true);
+    setError('');
+    try {
+      const res = await fetch(`${API_BASE}/api/public/invitations/${encodeURIComponent(token)}/accept`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), password, email: email.trim() })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const detail = Array.isArray(data.detail) ? 'Revisa los datos del formulario.' : data.detail;
+        setError(detail || 'No se pudo crear tu acceso.');
+        return;
+      }
+      storeToken(data);
+      try {
+        localStorage.setItem(TENANT_STORAGE_KEY, info.tenant === 'default' ? '' : info.tenant);
+        localStorage.setItem('zenith_login_username', info.email || email.trim() || info.phone || '');
+        localStorage.removeItem(ACTING_TENANT_KEY);
+      } catch { /* ignorar */ }
+      window.history.replaceState(null, '', info.tenant && info.tenant !== 'default' ? `/${info.tenant}/knowledge-base` : '/');
+      onDone();
+    } catch {
+      setError('No se pudo conectar con el servidor.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputCls = 'w-full h-10 bg-[#121212] border border-[#2e2e2e] rounded-md px-3 text-sm outline-none transition-colors';
+
+  return (
+    <div
+      className="min-h-screen bg-[#121212] text-zinc-100 font-sans flex flex-col items-center justify-center px-4 py-10"
+      style={{ backgroundImage: `radial-gradient(ellipse 60% 45% at 50% 0%, rgba(${rgb}, 0.14), transparent 70%)` }}
+    >
+      <main className="w-full max-w-[400px]">
+        <div className="flex flex-col items-center text-center mb-8">
+          {brand.logo ? (
+            <img src={brand.logo} alt={company} className="h-14 w-14 rounded-xl object-contain bg-[#1c1c1c] border border-[#2e2e2e] p-1.5" />
+          ) : (
+            <div className="h-14 w-14 rounded-xl flex items-center justify-center text-2xl font-semibold"
+              style={{ backgroundColor: color, color: readableTextOn(color) }} aria-hidden="true">
+              {company.trim().charAt(0).toUpperCase()}
+            </div>
+          )}
+          <h1 className="mt-5 text-2xl font-medium tracking-tight">Únete a {company}</h1>
+          {info && (
+            <p className="mt-1.5 text-sm text-zinc-400">Te invitaron como <b className="text-zinc-200">{info.role_label}</b>. Crea tu acceso para entrar.</p>
+          )}
+        </div>
+
+        {loadError ? (
+          <div className="bg-[#171717] border border-[#2e2e2e] rounded-lg p-6 space-y-4 text-center">
+            <div role="alert" className="flex items-start gap-2 text-[13px] text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-md px-3 py-2 text-left">
+              <AlertCircle size={15} className="mt-0.5 shrink-0" /> <span>{loadError}</span>
+            </div>
+            <button onClick={() => { window.history.replaceState(null, '', '/'); onDone(); }} className="text-sm text-zinc-300 hover:underline">
+              Ir al inicio de sesión
+            </button>
+          </div>
+        ) : !info ? (
+          <div className="flex justify-center text-zinc-500"><RefreshCw size={18} className="animate-spin" /></div>
+        ) : (
+          <form onSubmit={handleSubmit} className="bg-[#171717] border border-[#2e2e2e] rounded-lg p-6 space-y-4" noValidate>
+            <div className="text-[13px] text-zinc-400 bg-[#121212] border border-[#2e2e2e] rounded-md px-3 py-2">
+              Entrarás con <b className="text-zinc-200">{info.email || (info.phone ? `+${info.phone}` : '')}</b>
+              {info.tenant !== 'default' && <> en la empresa <b className="text-zinc-200">{info.tenant}</b></>}.
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="inv-name" className="block text-[13px] text-zinc-300">Tu nombre</label>
+              <input id="inv-name" value={name} onChange={e => setName(e.target.value)} maxLength={120} autoComplete="name" className={inputCls} autoFocus />
+            </div>
+            {!info.email && (
+              <div className="space-y-1.5">
+                <label htmlFor="inv-email" className="block text-[13px] text-zinc-300">Correo <span className="text-zinc-500">(opcional, para entrar también con él)</span></label>
+                <input id="inv-email" type="email" value={email} onChange={e => setEmail(e.target.value)} autoComplete="email" className={inputCls} />
+              </div>
+            )}
+            <div className="space-y-1.5">
+              <label htmlFor="inv-password" className="block text-[13px] text-zinc-300">Contraseña <span className="text-zinc-500">(mínimo 8 caracteres)</span></label>
+              <div className="relative">
+                <input id="inv-password" type={showPassword ? 'text' : 'password'} value={password}
+                  onChange={e => setPassword(e.target.value)} autoComplete="new-password" className={`${inputCls} pr-10`} />
+                <button type="button" onClick={() => setShowPassword(v => !v)}
+                  className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1.5 rounded text-zinc-500 hover:text-zinc-200"
+                  aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}>
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+            <div className="space-y-1.5">
+              <label htmlFor="inv-confirm" className="block text-[13px] text-zinc-300">Repite la contraseña</label>
+              <input id="inv-confirm" type={showPassword ? 'text' : 'password'} value={confirm}
+                onChange={e => setConfirm(e.target.value)} autoComplete="new-password" className={inputCls} aria-invalid={!!mismatch} />
+              {mismatch && <p className="text-[12px] text-amber-300">Las contraseñas no coinciden.</p>}
+            </div>
+            {error && (
+              <div role="alert" className="flex items-start gap-2 text-[13px] text-rose-300 bg-rose-500/10 border border-rose-500/20 rounded-md px-3 py-2">
+                <AlertCircle size={15} className="mt-0.5 shrink-0" /> <span>{error}</span>
+              </div>
+            )}
+            <button type="submit" disabled={!canSubmit}
+              className="w-full h-10 rounded-md text-sm font-medium transition-[filter,opacity] hover:brightness-110 disabled:opacity-50 flex items-center justify-center gap-2"
+              style={{ backgroundColor: color, color: readableTextOn(color) }}>
+              {saving && <RefreshCw size={14} className="animate-spin" />}
+              {saving ? 'Creando acceso…' : 'Crear mi acceso'}
+            </button>
+          </form>
+        )}
+      </main>
+      <footer className="mt-10 flex items-center gap-1.5 text-[12px] text-zinc-600">
+        <ShieldCheck size={13} /> Panel protegido · Impulsado por Zenith
+      </footer>
+    </div>
+  );
+}
+
 export default function App() {
+  const [publicCard] = useState(getPublicCardParams);
+  const [inviteToken, setInviteToken] = useState(getInviteToken);
   const [authenticated, setAuthenticated] = useState(() => Boolean(getStoredToken()));
 
   useEffect(() => {
@@ -4659,6 +5622,20 @@ export default function App() {
     setAuthenticated(false);
   };
 
+  if (publicCard) {
+    // Enlace de la tarjeta de fidelidad del cliente final: no requiere login
+    return publicCard.type === 'stamp'
+      ? <PublicStampFlow apiBase={API_BASE} token={publicCard.token} tenant={publicCard.tenant} />
+      : <PublicLoyaltyCard apiBase={API_BASE} token={publicCard.token} tenant={publicCard.tenant} />;
+  }
+  if (inviteToken) {
+    return (
+      <AcceptInviteScreen
+        token={inviteToken}
+        onDone={() => { setInviteToken(''); setAuthenticated(Boolean(getStoredToken())); }}
+      />
+    );
+  }
   if (!authenticated) {
     return <LoginScreen onLogin={() => setAuthenticated(true)} />;
   }

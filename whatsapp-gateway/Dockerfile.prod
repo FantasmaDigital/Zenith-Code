@@ -1,0 +1,21 @@
+# --- Dependencias (git solo hace falta aquí: libsignal se instala desde GitHub) ---
+FROM node:20-alpine AS deps
+RUN apk add --no-cache git
+WORKDIR /app
+COPY .npmrc package.json package-lock.json ./
+RUN npm ci --omit=dev && npm cache clean --force
+
+# --- Imagen final: sin git, sin código de desarrollo, usuario sin privilegios ---
+FROM node:20-alpine
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+COPY src ./src
+# La sesión de WhatsApp vive en un volumen; se crea con dueño «node» para que el volumen nuevo lo herede
+RUN mkdir -p /app/auth_info_baileys && chown -R node:node /app/auth_info_baileys
+USER node
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD wget -qO- http://127.0.0.1:3000/health >/dev/null || exit 1
+CMD ["node", "src/index.js"]

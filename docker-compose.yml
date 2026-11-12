@@ -26,6 +26,14 @@ services:
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Define INTERNAL_API_KEY en .env}
       - AUTH_SECRET=${AUTH_SECRET:-}
       - ALLOWED_ORIGINS=${ALLOWED_ORIGINS:-http://localhost:5173,http://127.0.0.1:5173}
+      # Invitaciones de usuarios: URL del panel en los enlaces y correo saliente (SMTP)
+      - PANEL_URL=${PANEL_URL:-}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - SMTP_SECURITY=${SMTP_SECURITY:-starttls}
     volumes:
       - ./backend-python:/app
     depends_on:
@@ -55,6 +63,8 @@ services:
       - MAX_RECONNECT_DELAY_MS=30000
       - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Define ADMIN_PASSWORD en .env}
       - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Define INTERNAL_API_KEY en .env}
+      # Empresa a la que pertenece este número de WhatsApp (ver MULTI-EMPRESA en README)
+      - TENANT_ID=${TENANT_ID:-default}
     volumes:
       - ./whatsapp-gateway/src:/app/src
       - baileys_auth_data:/app/auth_info_baileys
@@ -62,6 +72,33 @@ services:
       - python-backend
     networks:
       - zenith-net
+
+  # ----------------------------------------------------------
+  # Ejemplo: segundo número de WhatsApp para otra empresa (descomenta y ajusta).
+  # (agrega también el volumen baileys_auth_data_acme en la sección volumes)
+  # En el panel, esa empresa debe tener WHATSAPP_GATEWAY_URL=http://whatsapp-gateway-acme:3000
+  # ----------------------------------------------------------
+  # whatsapp-gateway-acme:
+  #   build:
+  #     context: ./whatsapp-gateway
+  #     dockerfile: Dockerfile
+  #   container_name: zenith-whatsapp-gateway-acme
+  #   restart: unless-stopped
+  #   environment:
+  #     - PORT=3000
+  #     - HOST=0.0.0.0
+  #     - PYTHON_BACKEND_URL=http://python-backend:8000
+  #     - AUTH_FOLDER=/app/auth_info_baileys
+  #     - ADMIN_PASSWORD=${ADMIN_PASSWORD:?Define ADMIN_PASSWORD en .env}
+  #     - INTERNAL_API_KEY=${INTERNAL_API_KEY:?Define INTERNAL_API_KEY en .env}
+  #     - TENANT_ID=acme
+  #   volumes:
+  #     - ./whatsapp-gateway/src:/app/src
+  #     - baileys_auth_data_acme:/app/auth_info_baileys
+  #   depends_on:
+  #     - python-backend
+  #   networks:
+  #     - zenith-net
 
   # ==========================================================
   # 3. BASE DE DATOS POSTGRESQL (PERSISTENCIA Y ALTA ESCALA)

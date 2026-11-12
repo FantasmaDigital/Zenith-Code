@@ -7,6 +7,9 @@ import os
 import sqlite3
 import tempfile
 
+# Todas las pruebas comparten la IP «testclient»: el límite por IP se prueba aparte (test_http_security)
+os.environ.setdefault("RATE_LIMIT_ENABLED", "false")
+
 
 class _TempCustomerDB:
     is_postgres = False

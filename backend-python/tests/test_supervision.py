@@ -105,6 +105,7 @@ class TestInbox(SupervisionTestCase):
         super().setUp()
         self.app = FastAPI()
         self.app.include_router(main.router)
+        self.app.include_router(main.arm_router)
         self.app.dependency_overrides[require_auth] = lambda: "admin"
         self.client = TestClient(self.app)
         leads = LeadService()
