@@ -124,7 +124,7 @@ services:
       context: ./frontend
       dockerfile: Dockerfile.prod
       args:
-        VITE_API_BASE: https://${API_DOMAIN:?Define API_DOMAIN en .env}
+        VITE_API_BASE: /backend
 
 networks:
   zenith-net:

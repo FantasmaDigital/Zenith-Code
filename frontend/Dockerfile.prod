@@ -4,27 +4,20 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci
 COPY . .
-# VITE_API_BASE se incrusta en el build.
-#  - "/backend" (por defecto): el panel llama a la API por su mismo dominio y nginx la reenvía a BACKEND_URL.
-#    Sin peticiones a otro origen, CORS no interviene.
-#  - "https://api.tudominio.com": el panel llama directo a la API pública (requiere ALLOWED_ORIGINS en el backend).
-ARG VITE_API_BASE=/backend
-ENV VITE_API_BASE=${VITE_API_BASE}
-RUN npm run build
+# El panel SIEMPRE llama a la API por su mismo dominio (/backend) y nginx la reenvía a BACKEND_URL.
+# Sin peticiones a otro origen, CORS no interviene. Se fija aquí (no como ARG) para que un VITE_API_BASE
+# heredado en la plataforma de despliegue no lo sobrescriba.
+RUN VITE_API_BASE=/backend npm run build
 
 # --- Servidor estático ---
 FROM nginx:1.27-alpine
-ARG VITE_API_BASE=/backend
 # URL interna del backend para el proxy /backend/ (se puede cambiar en tiempo de ejecución).
 # En EasyPanel: http://<proyecto>_<servicio>:<puerto>
 ENV BACKEND_URL=http://zenith-studio_docker:8000
 # La imagen oficial pasa los *.template por envsubst al arrancar (solo variables definidas, como BACKEND_URL)
 COPY nginx.conf /etc/nginx/templates/default.conf.template
-# La CSP solo permite hablar con la propia API: si es una URL absoluta se añade; si es una ruta, basta 'self'
-RUN case "${VITE_API_BASE}" in \
-      http*) sed -i "s#__API_ORIGIN__#${VITE_API_BASE}#" /etc/nginx/templates/default.conf.template ;; \
-      *)     sed -i "s# __API_ORIGIN__##" /etc/nginx/templates/default.conf.template ;; \
-    esac
+# La API está en el mismo origen: a la CSP le basta 'self'
+RUN sed -i "s# __API_ORIGIN__##" /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 EXPOSE 80
 HEALTHCHECK --interval=30s --timeout=3s CMD wget -qO- http://127.0.0.1/ >/dev/null || exit 1
