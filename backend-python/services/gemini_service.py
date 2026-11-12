@@ -94,7 +94,7 @@ class GeminiService:
         key = settings.GEMINI_API_KEY.strip()
         if key and key != "tu_gemini_api_key_aqui":
             try:
-                return genai.Client(api_key=key)
+                return genai.Client(api_key=key, http_options={"api_version": "v1beta"})
             except Exception as e:
                 logger.error(f"Error al inicializar cliente de Gemini: {e}")
         return None

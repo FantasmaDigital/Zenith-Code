@@ -550,7 +550,7 @@ class CustomerService(TenantReadyMixin):
                 cfg = {"temperature": 0.2, "max_output_tokens": 600, "response_mime_type": "application/json"}
                 if hasattr(types, "ThinkingConfig"):
                     cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
-                resp = genai.Client(api_key=key).models.generate_content(
+                resp = genai.Client(api_key=key, http_options={"api_version": "v1beta"}).models.generate_content(
                     model=settings.GEMINI_MODEL or "gemini-2.5-flash", contents=prompt,
                     config=types.GenerateContentConfig(**cfg))
                 if resp and resp.text:

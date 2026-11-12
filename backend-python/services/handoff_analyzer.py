@@ -93,7 +93,7 @@ def analyze_handoff_intent(messages: List[Dict[str, str]], reason: str = "") -> 
 
         api_key = settings.GEMINI_API_KEY.strip()
         if api_key and not api_key.startswith("AIzaSyFake"):
-            client = genai.Client(api_key=api_key)
+            client = genai.Client(api_key=api_key, http_options={"api_version": "v1beta"})
             config = types.GenerateContentConfig(
                 temperature=0.1,
                 max_output_tokens=150,
