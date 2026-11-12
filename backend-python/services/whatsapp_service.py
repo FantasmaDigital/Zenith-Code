@@ -76,7 +76,11 @@ class WhatsAppGatewayService:
                 if response.status_code in (200, 201):
                     logger.info(f"Mensaje enviado con éxito a +{to_phone} vía WhatsApp Gateway ({base_url}).")
                     return True
+                body = (response.text or "").strip()[:300]
+                self.last_send_error = f"El gateway ({base_url}) respondió {response.status_code}: {body or 'sin detalle'}"
+                logger.error(self.last_send_error)
             except requests.exceptions.RequestException as e:
+                self.last_send_error = f"No se pudo conectar con el gateway en {base_url}: {type(e).__name__}"
                 logger.error(f"Error al enviar mensaje vía WhatsApp Gateway ({base_url}) a {to_phone}: {e}")
 
         return False
