@@ -59,6 +59,37 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.DEBUG else None
 )
 
+class CatchErrorsMiddleware:
+    """
+    Convierte cualquier excepción no controlada en un 500 JSON *dentro* de CORS. Sin esto, Starlette responde
+    el 500 desde fuera de CORSMiddleware y el navegador solo muestra "blocked by CORS", ocultando el error real.
+    """
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+        started = False
+
+        async def send_wrapper(message):
+            nonlocal started
+            if message["type"] == "http.response.start":
+                started = True
+            await send(message)
+
+        try:
+            await self.app(scope, receive, send_wrapper)
+        except Exception as e:
+            logger.exception(f"Error no controlado en {scope.get('method')} {scope.get('path')}: {e}")
+            if started:
+                raise
+            response = JSONResponse(status_code=500, content={"detail": f"Error interno del servidor: {type(e).__name__}"})
+            await response(scope, receive, send)
+
+
+app.add_middleware(CatchErrorsMiddleware)
+
 # Límite por IP en rutas públicas y cabeceras de seguridad. Se agregan antes que CORS para que CORS quede
 # por fuera y también las respuestas 429 lleven sus cabeceras (el panel puede leer el error).
 app.add_middleware(RateLimitMiddleware, limiter=rate_limiter)
