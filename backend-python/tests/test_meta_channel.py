@@ -106,7 +106,7 @@ class TestMetaChannel(unittest.TestCase):
         with patch.object(meta_service, "send_text_message",
                           return_value={"success": False, "error": "Fuera de la ventana de 24 horas"}):
             res = self.client.post("/api/whatsapp/send", json={"to": "50370001234", "message": "Hola"})
-        self.assertEqual(res.status_code, 502)
+        self.assertEqual(res.status_code, 424)
         self.assertIn("24 horas", res.json()["detail"])
 
     def test_channel_summary_lists_webhook_url(self):

@@ -101,7 +101,7 @@ async def extract_services_from_content(body: ExtractRequest, _=Depends(require_
             source_title = scraped.get("title", target_url)
         except Exception as e:
             logger.error(f"Error scraping {target_url}: {e}")
-            raise HTTPException(status_code=502, detail=f"No se pudo acceder al sitio web: {str(e)}")
+            raise HTTPException(status_code=424, detail=f"No se pudo acceder al sitio web: {str(e)}")
     else:
         # Extraer de documentos de la base de conocimiento
         try:

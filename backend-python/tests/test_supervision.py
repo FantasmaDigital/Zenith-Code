@@ -158,7 +158,7 @@ class TestInbox(SupervisionTestCase):
         cid = customer_service.get_by_session("50378880020")["id"]
         self.sent.return_value = False
         res = self.client.post(f"/api/customers/{cid}/reply", json={"text": "Hola"})
-        self.assertEqual(res.status_code, 502)
+        self.assertEqual(res.status_code, 424)
 
     def test_policy_endpoints(self):
         self.assertEqual(self.client.put("/api/agent/tool-policies/crear_pedido", json={"policy": "x"}).status_code, 422)

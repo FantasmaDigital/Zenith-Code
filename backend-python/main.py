@@ -1061,7 +1061,7 @@ def send_message_endpoint(request: SendMessageRequest):
     )
     if not success:
         raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
+            status_code=status.HTTP_424_FAILED_DEPENDENCY,
             detail=whatsapp_service.last_send_error or "No se pudo enviar el mensaje a través del WhatsApp Gateway."
         )
     return {"status": "sent", "to": request.to}
@@ -1173,7 +1173,7 @@ def reply_to_customer(customer_id: int, data: AgentReply):
         # Chat del simulador o web: no hay a dónde enviarlo; nunca se reporta como entregado
         raise HTTPException(status_code=400, detail="Este chat no es de WhatsApp: el mensaje no se puede entregar al cliente.")
     if not whatsapp_service.send_text_message(sid, data.text.strip()):
-        raise HTTPException(status_code=502, detail=whatsapp_service.last_send_error or "No se pudo enviar por WhatsApp.")
+        raise HTTPException(status_code=424, detail=whatsapp_service.last_send_error or "No se pudo enviar por WhatsApp.")
     if data.take_over and not lead_service.is_transferred(sid):
         lead_service.pause_handoff(sid, reason=f"Atendido por {data.actor or 'un asesor'} desde la bandeja",
                                    tag="ATENCIÓN HUMANA", notes="Respondido desde la bandeja del panel.")
@@ -1286,7 +1286,7 @@ def send_weekly_report():
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     if not ok:
-        raise HTTPException(status_code=502, detail=whatsapp_service.last_send_error or "No se pudo enviar por WhatsApp.")
+        raise HTTPException(status_code=424, detail=whatsapp_service.last_send_error or "No se pudo enviar por WhatsApp.")
     return {"status": "sent"}
 
 
@@ -1319,7 +1319,7 @@ def refresh_customer_summary(customer_id: int):
         raise HTTPException(status_code=404, detail="Cliente no encontrado.")
     updated = customer_service.refresh_summary(customer["session_id"])
     if updated is None or updated.get("summary_updated_at") == customer.get("summary_updated_at"):
-        raise HTTPException(status_code=502, detail="La IA no pudo generar el resumen. Revisa las claves de IA.")
+        raise HTTPException(status_code=424, detail="La IA no pudo generar el resumen. Revisa las claves de IA.")
     return {"customer": customer_service.get(customer_id)}
 
 

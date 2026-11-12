@@ -251,7 +251,7 @@ def public_stamp_code(tenant: str, qr_token: str, data: CodeRequest):
             notify.send_code(contact, created["channel"], created["code"])
         except Exception as e:
             logger.warning(f"No se pudo enviar el código de fidelidad: {e}")
-            raise HTTPException(status_code=502, detail="No pudimos enviar el código. Intenta de nuevo en un momento.")
+            raise HTTPException(status_code=424, detail="No pudimos enviar el código. Intenta de nuevo en un momento.")
         return {"code_required": True, "sent_via": created["channel"], "contact": _mask(contact)}
 
 
