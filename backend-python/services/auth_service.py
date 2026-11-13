@@ -10,7 +10,7 @@ from typing import Dict, Optional, Tuple
 from fastapi import Header, HTTPException, Request, status
 
 from config import settings
-from services.tenant_service import DEFAULT_TENANT, current_tenant, normalize_slug, tenant_registry
+from services.tenant_service import DEFAULT_TENANT, current_tenant, normalize_slug, public_slug, default_public_slug, tenant_registry
 from services.user_service import OWNER_ROLE, role_allows, user_service
 
 logger = logging.getLogger("asistente_operativo.auth")
@@ -69,7 +69,8 @@ class AuthService:
         payload = json.dumps(claims, separators=(",", ":"))
         payload_b64 = base64.urlsafe_b64encode(payload.encode("utf-8")).decode("ascii").rstrip("=")
         return {"token": f"{payload_b64}.{self._sign(payload_b64)}", "expires_at": claims["exp"],
-                "tenant": claims["tenant"], "superadmin": claims["sa"], "role": claims["urole"]}
+                "tenant": claims["tenant"], "tenant_slug": public_slug(str(claims["tenant"])),
+                "default_slug": default_public_slug(), "superadmin": claims["sa"], "role": claims["urole"]}
 
     def decode_token(self, token: str) -> Optional[Dict[str, object]]:
         """Claims del token si la firma es válida y no expiró; si no, None."""
@@ -139,8 +140,10 @@ class AuthService:
         username = (username or "").strip()
         tenant_given = bool((tenant or "").strip())
         tenant = normalize_slug(tenant)
+        # «admin» = contraseña de la empresa de esta página (en la principal, el superadmin).
+        # Ya no salta a la empresa principal desde la página de otra empresa.
         if username.lower() in ("admin", "superadmin"):
-            username, tenant = "", DEFAULT_TENANT
+            username = ""
 
         user = None
         ok = False

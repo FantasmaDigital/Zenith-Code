@@ -18,7 +18,7 @@ class TestSecurityHeaders(unittest.TestCase):
         self.assertNotIn("server", {k.lower() for k in res.headers})
 
     def test_api_responses_are_not_cached(self):
-        res = self.anon.get("/api/public/branding")
+        res = self.anon.get("/api/public/branding", params={"tenant": "default"})
         self.assertEqual(res.headers.get("cache-control"), "no-store")
 
     def test_docs_hidden_outside_debug(self):

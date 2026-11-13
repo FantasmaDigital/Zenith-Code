@@ -10,6 +10,7 @@ consulta tenga que filtrar por `tenant_id`.
 - El registro de empresas (`zenith_tenants`) vive siempre en la base de la empresa «default».
 """
 import contextvars
+import functools
 import hashlib
 import hmac
 import logging
@@ -29,6 +30,33 @@ SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$")
 _current: contextvars.ContextVar = contextvars.ContextVar("zenith_tenant", default=DEFAULT_TENANT)
 
 
+def _slugify(text: str) -> str:
+    import unicodedata
+    plain = unicodedata.normalize("NFKD", text or "").encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "-", plain).strip("-")[:40].strip("-")
+
+
+@functools.lru_cache(maxsize=1)
+def default_public_slug() -> str:
+    """Slug con el que la empresa principal aparece en la URL (/fantasma-digital/...).
+    Se toma de DEFAULT_TENANT_SLUG o, si no está, del nombre de la empresa (COMPANY_NAME)."""
+    import os
+    for candidate in (os.getenv("DEFAULT_TENANT_SLUG", ""), _slugify(os.getenv("COMPANY_NAME", ""))):
+        slug = (candidate or "").strip().lower()
+        if slug and slug not in RESERVED_SLUGS and SLUG_RE.match(slug):
+            return slug
+    return "principal"
+
+
+
+
+
+def public_slug(slug: Optional[str]) -> str:
+    """Slug para la URL: la empresa «default» usa su alias legible."""
+    slug = normalize_slug(slug)
+    return default_public_slug() if slug == DEFAULT_TENANT else slug
+
+
 # ----------------------------------------------------------------------
 # Contexto de empresa activa
 # ----------------------------------------------------------------------
@@ -39,7 +67,9 @@ def current_tenant() -> str:
 def normalize_slug(raw: Optional[str]) -> str:
     """Normaliza el identificador de empresa; vacío = empresa por defecto."""
     slug = (raw or "").strip().lower()
-    return slug or DEFAULT_TENANT
+    if not slug or slug == default_public_slug():  # el alias de la URL es la empresa principal
+        return DEFAULT_TENANT
+    return slug
 
 
 def validate_slug(raw: str) -> str:

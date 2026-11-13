@@ -98,6 +98,7 @@ import AgentPanel from './components/AgentPanel';
 import InboxPanel from './components/InboxPanel';
 import UsersPanel from './components/UsersPanel';
 import LoyaltyPanel, { PublicLoyaltyCard, PublicStampFlow, getPublicCardParams } from './components/LoyaltyPanel';
+import LandingScreen from './components/LandingScreen';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
@@ -188,8 +189,17 @@ const ROOT_TABS = new Set([
   'iot-printing', 'iot_printing', 'iot', 'impresoras', 'hardware',
   'inbox', 'bandeja',
   'services', 'servicios', 'leads', 'proposals', 'propuestas',
-  'loyalty', 'fidelidad', 'tarjetas'
+  'loyalty', 'fidelidad', 'tarjetas',
+  'auth'
 ]);
+
+// Empresa de la pantalla de acceso: /auth/:empresa (o /:empresa/... si llegó sin sesión)
+const getAuthSlug = () => {
+  const parts = window.location.pathname.toLowerCase().split('/').filter(Boolean);
+  if (parts[0] === 'auth') return parts[1] || '';
+  // eslint-disable-next-line no-use-before-define
+  return getTenantFromUrl();
+};
 
 const getTenantFromUrl = (pathname) => {
   try {
@@ -208,10 +218,20 @@ const getTenantFromUrl = (pathname) => {
 
 // Un superadmin puede operar otra empresa: se envía X-Tenant-Id en cada petición
 // La URL (/:slug/...) tiene máxima prioridad para soportar multi-pestaña real.
+// La empresa principal («default») aparece en la URL con su propio slug (p. ej. /fantasma-digital)
+const getDefaultSlug = () => getStoredAuth().default_slug || '';
+const isDefaultSlug = (slug) => !slug || slug === 'default' || slug === getDefaultSlug();
+// Slug de la empresa a la que pertenece el usuario que inició sesión
+const getOwnSlug = () => {
+  const auth = getStoredAuth();
+  if (auth.tenant_slug) return auth.tenant_slug;
+  return auth.tenant && auth.tenant !== 'default' ? auth.tenant : getDefaultSlug();
+};
+
 const getActingTenant = () => {
   const urlTenant = getTenantFromUrl();
   if (urlTenant) {
-    if (urlTenant === 'default' || ROOT_TABS.has(urlTenant)) return '';
+    if (isDefaultSlug(urlTenant) || ROOT_TABS.has(urlTenant)) return '';
     return urlTenant;
   }
   if (!isSuperadmin()) return '';
@@ -221,13 +241,42 @@ const getActingTenant = () => {
       localStorage.removeItem(ACTING_TENANT_KEY);
       return '';
     }
-    return val;
+    return isDefaultSlug(val) ? '' : val;
   } catch { return ''; }
 };
 const setActingTenant = (slug) => {
   try {
-    if (slug) localStorage.setItem(ACTING_TENANT_KEY, slug); else localStorage.removeItem(ACTING_TENANT_KEY);
+    if (slug && !isDefaultSlug(slug)) localStorage.setItem(ACTING_TENANT_KEY, slug); else localStorage.removeItem(ACTING_TENANT_KEY);
   } catch { /* ignorar */ }
+};
+
+// Slug que debe ir en la URL para la empresa que se está viendo
+const urlSlugFor = (tenant) => {
+  if (tenant && !isDefaultSlug(tenant)) return tenant;
+  return isSuperadmin() ? getDefaultSlug() : getOwnSlug();
+};
+
+// Normaliza la URL al entrar: «/» y «/default/...» llevan al slug de la empresa,
+// y un usuario normal nunca se queda en el slug de otra empresa.
+const canonicalizeUrl = () => {
+  const path = window.location.pathname;
+  const parts = path.split('/').filter(Boolean);
+  if ((parts[0] || '').toLowerCase() === 'tenants' || (parts[0] || '').toLowerCase() === 'empresas') return;
+  if ((parts[0] || '').toLowerCase() === 'auth') {
+    // Con sesión iniciada, /auth/... lleva directo al panel
+    const slug = urlSlugFor(getActingTenant());
+    window.history.replaceState(null, '', slug ? `/${slug}/knowledge-base` : '/knowledge-base');
+    return;
+  }
+  const urlTenant = getTenantFromUrl(path);
+  const rest = urlTenant ? `/${parts.slice(1).join('/')}` : path;
+  let target;
+  if (!urlTenant) target = urlSlugFor(getActingTenant());
+  else if (urlTenant === 'default') target = getDefaultSlug();
+  else if (!isSuperadmin() && getOwnSlug() && urlTenant !== getOwnSlug()) target = getOwnSlug();
+  if (!target) return;
+  const next = `/${target}${rest === '/' || rest === '' ? '/knowledge-base' : rest}`;
+  if (next !== path) window.history.replaceState(null, '', next + window.location.search);
 };
 
 const clearStoredToken = () => {
@@ -596,9 +645,10 @@ const parseLocation = (pathname) => {
   let tenant = '';
   let restParts = parts;
   if (!ROOT_TABS.has(parts[0])) {
-    tenant = parts[0];
+    tenant = isDefaultSlug(parts[0]) ? '' : parts[0];
     restParts = parts.slice(1);
   }
+  if (restParts.length === 0) return { tenant, tab: 'library', sub: null };
 
   const tab = getTabFromPath(restParts.length ? `/${restParts[0]}` : '/');
   if (tab === 'customers' || tab === 'inbox') {
@@ -620,11 +670,8 @@ const buildPath = (tab, subTab, targetTenant) => {
     rel = sub ? `${base}/${sub.slugs[subTab] || sub.slugs[sub.default]}` : base;
   }
   if (tab === 'tenants') return '/tenants';
-  const tenant = targetTenant !== undefined ? targetTenant : getActingTenant();
-  if (tenant && tenant !== 'default') {
-    return `/${tenant}${rel}`;
-  }
-  return rel;
+  const tenant = urlSlugFor(targetTenant !== undefined ? targetTenant : getActingTenant());
+  return tenant ? `/${tenant}${rel}` : rel;
 };
 
 // ==============================================================
@@ -685,6 +732,7 @@ function NavGroup({ id, icon: Icon, label, open, onToggle, hasActive, indicator,
 }
 
 function Dashboard({ onLogout }) {
+  useState(canonicalizeUrl); // solo en el primer render, antes de leer la URL
   const initialLocation = parseLocation(window.location.pathname);
   if (initialLocation.tenant && isSuperadmin()) {
     setActingTenant(initialLocation.tenant);
@@ -809,9 +857,15 @@ function Dashboard({ onLogout }) {
         if (data && Array.isArray(data.features)) setFeatures(data.features);
         if (data && data.superadmin !== undefined) {
           const stored = getStoredAuth();
+          const slugs = { default_slug: data.default_slug || stored.default_slug };
+          // Para un superadmin, «tenant» es la empresa que está operando, no la suya
+          if (!data.superadmin) slugs.tenant_slug = data.tenant_slug || stored.tenant_slug;
           if (stored.superadmin !== data.superadmin) {
-            storeToken({ ...stored, superadmin: data.superadmin, tenant: data.tenant });
+            storeToken({ ...stored, ...slugs, superadmin: data.superadmin, tenant: data.tenant });
+          } else if (slugs.default_slug !== stored.default_slug || (slugs.tenant_slug && slugs.tenant_slug !== stored.tenant_slug)) {
+            storeToken({ ...stored, ...slugs });
           }
+          canonicalizeUrl(); // sesiones antiguas: ya se conoce el slug
         }
       })
       .catch(() => {});
@@ -5206,13 +5260,9 @@ function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState(() => {
     try { return localStorage.getItem('zenith_login_username') || ''; } catch { return ''; }
   });
-  // Empresa: ?empresa=slug en la URL > la última usada > vacío (empresa principal)
-  const [tenant, setTenant] = useState(() => {
-    try {
-      const fromUrl = new URLSearchParams(window.location.search).get('empresa');
-      return (fromUrl || localStorage.getItem(TENANT_STORAGE_KEY) || '').trim().toLowerCase();
-    } catch { return ''; }
-  });
+  // Empresa: siempre la de la URL (/:empresa). La raíz no muestra este formulario.
+  const [tenant] = useState(() => getAuthSlug().trim().toLowerCase());
+  const [notFound, setNotFound] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
   const [error, setError] = useState('');
@@ -5222,18 +5272,22 @@ function LoginScreen({ onLogin }) {
   // Empresas entre las que elegir cuando la cuenta pertenece a varias
   const [choices, setChoices] = useState(null);
   // La marca se guarda en el navegador para que la pantalla aparezca con el logo y color correctos al instante
+  const brandKey = `${BRANDING_CACHE_KEY}_${tenant}`;
   const [brand, setBrand] = useState(() => {
-    try { return JSON.parse(localStorage.getItem(BRANDING_CACHE_KEY) || 'null'); } catch { return null; }
+    try { return JSON.parse(localStorage.getItem(brandKey) || 'null'); } catch { return null; }
   });
 
   useEffect(() => {
     const timer = setTimeout(() => {
       fetch(`${API_BASE}/api/public/branding?tenant=${encodeURIComponent(tenant)}`)
-        .then(res => (res.ok ? res.json() : null))
+        .then(res => {
+          if (res.status === 404) setNotFound(true);
+          return res.ok ? res.json() : null;
+        })
         .then(data => {
           if (!data) return;
           setBrand(data);
-          try { localStorage.setItem(BRANDING_CACHE_KEY, JSON.stringify(data)); } catch { /* sin espacio: no importa */ }
+          try { localStorage.setItem(brandKey, JSON.stringify(data)); } catch { /* sin espacio: no importa */ }
         })
         .catch(() => {});
     }, 300);
@@ -5264,7 +5318,8 @@ function LoginScreen({ onLogin }) {
         body: JSON.stringify({
           password,
           username: ownerMode ? '' : username.trim(),
-          tenant: ownerMode ? tenant : chosenTenant
+          // Siempre la empresa de esta página: nadie entra a otra empresa desde aquí
+          tenant: chosenTenant || tenant
         })
       });
       const data = await res.json().catch(() => ({}));
@@ -5281,12 +5336,13 @@ function LoginScreen({ onLogin }) {
       storeToken(data);
       const slug = data.tenant && data.tenant !== 'default' ? data.tenant : '';
       try {
-        localStorage.setItem(TENANT_STORAGE_KEY, slug);
+        localStorage.setItem(TENANT_STORAGE_KEY, data.tenant_slug || slug);
         if (!ownerMode) localStorage.setItem('zenith_login_username', username.trim());
         localStorage.removeItem(ACTING_TENANT_KEY);
       } catch { /* ignorar */ }
       // Llevar al usuario a SU empresa (la URL /:empresa/... define la empresa que ve el panel)
-      window.history.replaceState(null, '', data.superadmin ? '/' : (slug ? `/${slug}/knowledge-base` : '/knowledge-base'));
+      const urlSlug = data.tenant_slug || slug;
+      window.history.replaceState(null, '', urlSlug ? `/${urlSlug}/knowledge-base` : '/knowledge-base');
       onLogin();
     } catch {
       setError('No se pudo conectar con el servidor. Revisa que el backend esté encendido.');
@@ -5322,7 +5378,12 @@ function LoginScreen({ onLogin }) {
           <p className="mt-1.5 text-sm text-zinc-400">Inicia sesión para administrar a {botName}.</p>
         </div>
 
-        {choices ? (
+        {notFound ? (
+          <div className="bg-[#171717] border border-[#2e2e2e] rounded-lg p-6 text-center space-y-3">
+            <p className="text-sm text-zinc-200">No encontramos esa empresa. Revisa el enlace que te compartieron.</p>
+            <a href="/" className="text-[13px] text-zinc-400 hover:text-white">Ir al inicio</a>
+          </div>
+        ) : choices ? (
           <div className="bg-[#171717] border border-[#2e2e2e] rounded-lg p-6 space-y-3">
             <p className="text-sm text-zinc-200">Tu cuenta pertenece a varias empresas. ¿A cuál quieres entrar?</p>
             {choices.map(c => (
@@ -5350,7 +5411,7 @@ function LoginScreen({ onLogin }) {
                 id="login-tenant"
                 type="text"
                 value={tenant}
-                onChange={e => { setTenant(e.target.value.trim().toLowerCase()); if (error) setError(''); }}
+                readOnly
                 autoComplete="organization"
                 autoCapitalize="none"
                 spellCheck={false}
@@ -5618,7 +5679,9 @@ export default function App() {
   }, []);
 
   const handleLogout = () => {
+    const slug = getTenantFromUrl() || getOwnSlug();
     clearStoredToken();
+    window.history.replaceState(null, '', slug ? `/auth/${slug}` : '/');
     setAuthenticated(false);
   };
 
@@ -5637,7 +5700,13 @@ export default function App() {
     );
   }
   if (!authenticated) {
-    return <LoginScreen onLogin={() => setAuthenticated(true)} />;
+    // Sin empresa en la URL (/ o /auth): página comercial, sin formulario de acceso
+    const slug = getAuthSlug();
+    if (!slug) return <LandingScreen />;
+    if (!window.location.pathname.toLowerCase().startsWith('/auth/')) {
+      window.history.replaceState(null, '', `/auth/${slug}`);
+    }
+    return <LoginScreen key={slug} onLogin={() => setAuthenticated(true)} />;
   }
   return <Dashboard onLogout={handleLogout} />;
 }

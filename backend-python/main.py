@@ -35,7 +35,7 @@ from services.user_service import (
     invite_link, normalize_email, normalize_phone,
 )
 from services.tenant_service import (
-    DEFAULT_TENANT, FEATURE_ARM, current_tenant, normalize_slug, require_feature, tenant_context, tenant_registry,
+    DEFAULT_TENANT, FEATURE_ARM, current_tenant, normalize_slug, public_slug, default_public_slug, require_feature, tenant_context, tenant_registry,
 )
 from services.meta_service import meta_service
 from services.db_service import db_service
@@ -194,6 +194,9 @@ def health_check():
 @app.get("/api/public/branding")
 def public_branding(tenant: str = ""):
     """Identidad visual para la pantalla de inicio de sesión (pública: solo nombre, logo y color, nada privado)."""
+    if not (tenant or "").strip():
+        # Sin empresa no se revela ninguna marca: la raíz del panel es neutra
+        raise HTTPException(status_code=404, detail="Empresa no encontrada.")
     slug = normalize_slug(tenant)
     if slug != DEFAULT_TENANT and not tenant_registry.is_active(slug):
         raise HTTPException(status_code=404, detail="Empresa no encontrada.")
@@ -232,6 +235,8 @@ def check_auth(authorization: Optional[str] = Header(default=None)):
     return {
         "authenticated": True,
         "tenant": current_tenant(),
+        "tenant_slug": public_slug(current_tenant()),
+        "default_slug": default_public_slug(),
         "tenant_name": rec.get("name", ""),
         "features": rec.get("features", []),
         "superadmin": bool(claims and claims.get("sa")),
@@ -793,6 +798,8 @@ def chat_direct(request: ChatRequest, caller: str = Depends(require_auth)):
     if request.contact_name:
         try:
             customer_service.note_contact(request.session_id, request.contact_name)
+            if request.contact_avatar is not None:
+                customer_service.set_avatar(request.session_id, request.contact_avatar)
         except Exception as e:
             logger.debug(f"No se pudo registrar el nombre de contacto: {e}")
 
