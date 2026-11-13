@@ -14,6 +14,7 @@ const fs = require('fs');
 
 const config = require('../config');
 const reconnection = require('./reconnection');
+const { AuthBackup, listTenants } = require('./authBackup');
 const { forwardToPythonBackend } = require('../bridge/pythonBridge');
 
 // Mismo formato que el backend (services/tenant_service.py: SLUG_RE) + la empresa principal «default».
@@ -93,6 +94,8 @@ class WhatsAppSession {
     this.shuttingDown = false;
     this.logger = pino({ level: config.logLevel === 'silent' ? 'silent' : 'warn' });
     this.reconnection = new reconnection.ReconnectionManager();
+    // Respaldo cifrado de la sesión en la base de datos (sobrevive a contenedores recreados sin volumen)
+    this.backup = new AuthBackup(this.tenantId, this.authFolder);
 
     // Mensajes ya procesados (WhatsApp puede reenviarlos tras reconectar) y cola por chat
     this.seenMessageIds = new Map();
@@ -168,6 +171,8 @@ class WhatsAppSession {
     console.log(`[WhatsAppSession:${this.tenantId}] Iniciando sesión Baileys (Estado: ${this.status})...`);
 
     try {
+      await this.backup.restoreIfMissing();
+      if (this.shuttingDown) return;
       const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
       const version = await getBaileysVersion();
       if (this.shuttingDown) return;
@@ -193,6 +198,7 @@ class WhatsAppSession {
       sock.ev.on('creds.update', async () => {
         try {
           await saveCreds();
+          this.backup.soon();
         } catch (e) {
           console.error(`[WhatsAppSession:${this.tenantId}] Error guardando credenciales:`, e.message);
         }
@@ -240,6 +246,8 @@ class WhatsAppSession {
       this.connectedAt = new Date().toISOString();
       this.user = this.sock?.user || null;
       this.reconnection.reset();
+      this.backup.start();
+      this.backup.flush();
 
       const phoneNumber = this.user?.id ? this.user.id.split(':')[0] : 'Desconocido';
       console.log('\n=============================================================');
@@ -272,6 +280,8 @@ class WhatsAppSession {
         this.qrString = null;
         this.qrDataUrl = null;
         this.reconnection.cleanAuthDirectory(this.authFolder);
+        this.backup.stop();
+        this.backup.clear();
       } else if (!wasPaired && evalResult.statusCode !== DisconnectReason.restartRequired) {
         // Nunca se vinculó y el QR caducó: solo se genera otro si alguien lo pidió hace poco.
         // Antes se regeneraban QR para siempre en cada empresa sin vincular.
@@ -509,6 +519,8 @@ class WhatsAppSession {
     }
     this._teardownSocket();
     this.reconnection.cleanAuthDirectory(this.authFolder);
+    this.backup.stop();
+    await this.backup.clear();
     this.reconnection.reset();
     this.status = 'DISCONNECTED';
     this.stopReason = null;
@@ -525,10 +537,12 @@ class WhatsAppSession {
   }
 
   /** Apagado del proceso: cierra el socket SIN desvincular el teléfono. */
-  shutdown() {
+  async shutdown() {
     this.shuttingDown = true;
     this.reconnection.cancel();
+    this.backup.stop();
     this._teardownSocket();
+    await this.backup.flush(); // último respaldo antes de apagar
   }
 }
 
@@ -579,12 +593,16 @@ class SessionManager {
    * Al arrancar, reabre las sesiones de todas las empresas que ya estaban vinculadas.
    * Antes solo se abría la principal y las demás quedaban sin responder hasta que alguien abría su panel.
    */
-  restoreAll() {
-    const main = this.initDefault();
-    if (!fs.existsSync(path.join(main.authFolder, 'creds.json'))) {
-      // Si el número ya estaba vinculado y aun así pide QR tras reiniciar, la carpeta no es persistente
-      console.warn(`[SessionManager] ⚠️ No hay credenciales guardadas en ${main.authFolder}. ` +
-        'Si ya habías vinculado WhatsApp, monta un volumen persistente en AUTH_FOLDER o se perderá en cada reinicio.');
+  async restoreAll() {
+    this.initDefault();
+    // Empresas con sesión respaldada en la BD aunque su carpeta ya no exista en disco
+    for (const t of await listTenants()) {
+      if (!isValidTenant(t) || this.has(t)) continue;
+      try {
+        this.getSession(t);
+      } catch (e) {
+        console.error(`[SessionManager] No se pudo restaurar la sesión de [${t}] desde la BD:`, e.message);
+      }
     }
     const tenantsDir = path.join(config.authFolder, 'tenants');
     let entries = [];
@@ -596,6 +614,7 @@ class SessionManager {
     for (const entry of entries) {
       if (!entry.isDirectory() || !isValidTenant(entry.name)) continue;
       if (!fs.existsSync(path.join(tenantsDir, entry.name, 'creds.json'))) continue;
+      if (this.has(entry.name)) continue;
       try {
         this.getSession(entry.name);
       } catch (e) {
@@ -605,9 +624,7 @@ class SessionManager {
   }
 
   shutdownAll() {
-    for (const session of this.sessions.values()) {
-      session.shutdown();
-    }
+    return Promise.allSettled([...this.sessions.values()].map((s) => s.shutdown()));
   }
 
   // Métodos de compatibilidad directa

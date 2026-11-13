@@ -702,7 +702,7 @@ process.on('unhandledRejection', (reason) => {
 const server = app.listen(config.port, config.host, () => {
   console.log(`[WhatsAppGateway] 🚀 Servidor HTTP escuchando en http://${config.host}:${config.port}`);
   console.log(`[WhatsAppGateway] 📲 Abre http://localhost:${config.port}/qr para escanear el código QR`);
-  session.restoreAll();
+  session.restoreAll().catch((e) => console.error('[WhatsAppGateway] Error restaurando sesiones:', e.message));
 });
 
 // Apagado ordenado (docker stop / redeploy): cerrar sockets sin desvincular los teléfonos
@@ -711,9 +711,9 @@ function gracefulShutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[WhatsAppGateway] ${signal} recibido: cerrando sesiones...`);
-  session.shutdownAll();
-  server.close(() => process.exit(0));
-  setTimeout(() => process.exit(0), 5000).unref();
+  // Espera el último respaldo de la sesión en la BD antes de salir (máx. 8 s)
+  setTimeout(() => process.exit(0), 8000).unref();
+  session.shutdownAll().finally(() => server.close(() => process.exit(0)));
 }
 process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
 process.on('SIGINT', () => gracefulShutdown('SIGINT'));

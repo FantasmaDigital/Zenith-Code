@@ -1,4 +1,5 @@
 import logging
+import re
 from fastapi import APIRouter, BackgroundTasks, Depends, FastAPI, Header, Query, Request, HTTPException, status
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -1602,6 +1603,54 @@ def uninstall_system_module(module_id: str):
         logger.error(f"Error desinstalando módulo {module_id}: {e}")
         raise HTTPException(status_code=500, detail=f"No se pudo desinstalar el módulo: {e}")
 
+# ==============================================================
+# RESPALDO PROTEGIDO DE LA SESIÓN DE WHATSAPP (solo el gateway, con la clave interna)
+# ==============================================================
+def require_internal_key(x_internal_key: Optional[str] = Header(default=None)):
+    if not auth_service.is_valid_internal_key(x_internal_key):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No autorizado.")
+
+
+wa_auth_router = APIRouter(prefix="/api/internal/wa-auth", dependencies=[Depends(require_internal_key)])
+
+
+class WaAuthFiles(BaseModel):
+    files: dict[str, Optional[str]] = Field(..., max_length=500)
+
+
+def _wa_tenant(tenant: str) -> str:
+    slug = normalize_slug(tenant)
+    if not re.match(r"^[a-z0-9][a-z0-9-]{0,58}$", slug or ""):
+        raise HTTPException(status_code=400, detail="Empresa inválida.")
+    return slug
+
+
+@wa_auth_router.get("")
+def wa_auth_tenants():
+    from services.wa_auth_service import wa_auth_service
+    return {"tenants": wa_auth_service.list_tenants()}
+
+
+@wa_auth_router.get("/{tenant}")
+def wa_auth_load(tenant: str):
+    from services.wa_auth_service import wa_auth_service
+    return {"files": wa_auth_service.load_all(_wa_tenant(tenant))}
+
+
+@wa_auth_router.put("/{tenant}")
+def wa_auth_save(tenant: str, body: WaAuthFiles):
+    from services.wa_auth_service import wa_auth_service
+    return {"saved": wa_auth_service.save_files(_wa_tenant(tenant), body.files)}
+
+
+@wa_auth_router.delete("/{tenant}")
+def wa_auth_clear(tenant: str):
+    from services.wa_auth_service import wa_auth_service
+    wa_auth_service.clear(_wa_tenant(tenant))
+    return {"status": "cleared"}
+
+
+app.include_router(wa_auth_router)
 app.include_router(router)
 app.include_router(arm_router)
 app.include_router(tenants_router)
