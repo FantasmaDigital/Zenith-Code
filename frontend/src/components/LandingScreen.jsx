@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { ArrowRight, Bot, CalendarCheck, Check, Mail, MessageCircle, ShoppingBag, Users } from 'lucide-react';
+import { LegalLinks } from './LegalPages';
 
 // Datos de contacto comercial (configurables en el build: VITE_SALES_WHATSAPP=50370000000, VITE_SALES_EMAIL=ventas@...)
 const SALES_WHATSAPP = (import.meta.env.VITE_SALES_WHATSAPP || '').replace(/\D/g, '');
@@ -110,7 +111,10 @@ export default function LandingScreen() {
         </section>
       </main>
 
-      <footer className="border-t border-[#222] py-6 text-center text-xs text-zinc-500">© {new Date().getFullYear()} Zenith</footer>
+      <footer className="border-t border-[#222] py-6 text-center text-xs text-zinc-500 space-y-2">
+        <LegalLinks />
+        <p>© {new Date().getFullYear()} Zenith</p>
+      </footer>
     </div>
   );
 }

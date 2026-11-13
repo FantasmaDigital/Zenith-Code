@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Bot, Hand, Search, Send, UserRound, Undo2 } from 'lucide-react';
+import { ArrowLeft, Bot, Hand, Search, Send, UserRound, Undo2 } from 'lucide-react';
 import { Avatar } from './CustomersPanel';
 
 const POLL_MS = 5000;
@@ -81,7 +81,7 @@ function ConversationList({ api, selectedId, onSelect }) {
   );
 }
 
-function Conversation({ api, customerId, toast, themeColor, onOpenCustomer }) {
+function Conversation({ api, customerId, toast, themeColor, onOpenCustomer, onBack }) {
   const [customer, setCustomer] = useState(null);
   const [messages, setMessages] = useState([]);
   const [human, setHuman] = useState(false);
@@ -151,13 +151,18 @@ function Conversation({ api, customerId, toast, themeColor, onOpenCustomer }) {
 
   return (
     <div className="flex flex-col min-h-0">
-      <div className="px-4 py-2.5 border-b border-[#2e2e2e] flex items-center justify-between gap-3">
-        <button onClick={() => onOpenCustomer(customerId)} className="text-left min-w-0">
+      <div className="px-3 md:px-4 py-2.5 border-b border-[#2e2e2e] flex items-center justify-between gap-2 md:gap-3">
+        <button onClick={onBack} className="md:hidden p-2 -ml-1 text-zinc-400 hover:text-white shrink-0" aria-label="Volver a la lista">
+          <ArrowLeft size={18} />
+        </button>
+        <button onClick={() => onOpenCustomer(customerId)} className="text-left min-w-0 flex-1">
           <p className="text-[14px] font-medium text-zinc-100 truncate hover:underline">{customer?.name || phoneLabel(customer?.phone, customer?.channel)}</p>
           <p className="text-[12px] text-zinc-500 truncate">{customer?.stage_label}{customer?.summary ? ` · ${customer.summary}` : ''}</p>
         </button>
-        <button onClick={toggleControl} className={btn} title={human ? 'Devolver a la IA' : 'Tomar el control'}>
-          {human ? <><Undo2 size={13} /> Devolver a la IA</> : <><Hand size={13} /> Tomar el control</>}
+        <button onClick={toggleControl} className={`${btn} shrink-0`} title={human ? 'Devolver a la IA' : 'Tomar el control'}>
+          {human
+            ? <><Undo2 size={13} /> <span className="hidden sm:inline">Devolver a la IA</span><span className="sm:hidden">A la IA</span></>
+            : <><Hand size={13} /> <span className="hidden sm:inline">Tomar el control</span><span className="sm:hidden">Tomar</span></>}
         </button>
       </div>
 
@@ -217,10 +222,13 @@ export default function InboxPanel({ apiFetch, apiBase, themeColor, showToast, c
         <h1 className="text-xl font-medium tracking-tight text-zinc-100">Bandeja</h1>
         <p className="text-sm text-zinc-400 mt-1">Todas las conversaciones en vivo, con lo que hizo el agente. Toma el control cuando quieras.</p>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-[300px_1fr] h-[calc(100vh-200px)] min-h-[480px] bg-[#171717] border border-[#2e2e2e] rounded-md overflow-hidden">
-        <ConversationList api={api} selectedId={conversationId} onSelect={onSelect} />
+      <div className="grid grid-cols-1 md:grid-cols-[300px_1fr] h-[calc(100dvh-180px)] md:h-[calc(100vh-200px)] min-h-[420px] md:min-h-[480px] bg-[#171717] border border-[#2e2e2e] rounded-md overflow-hidden">
+        {/* En el móvil se ve una cosa a la vez: la lista o el chat abierto (con botón para volver) */}
+        <div className={`${conversationId ? 'hidden md:flex' : 'flex'} flex-col min-h-0 [&>div]:flex-1`}>
+          <ConversationList api={api} selectedId={conversationId} onSelect={onSelect} />
+        </div>
         {conversationId ? (
-          <Conversation api={api} customerId={conversationId} toast={toast} themeColor={themeColor} onOpenCustomer={onOpenCustomer} />
+          <Conversation api={api} customerId={conversationId} toast={toast} themeColor={themeColor} onOpenCustomer={onOpenCustomer} onBack={() => onSelect(null)} />
         ) : (
           <div className="hidden md:flex items-center justify-center text-[13px] text-zinc-500">Elige una conversación.</div>
         )}

@@ -363,8 +363,8 @@ export default function IotPrintingPanel({
 
         {/* TAB 2: HISTORIAL DE IMPRESIONES */}
         {activeTab === 'logs' && (
-          <div className="border border-[#2e2e2e] rounded-md overflow-hidden bg-[#171717]">
-            <table className="w-full text-left text-xs">
+          <div className="border border-[#2e2e2e] rounded-md overflow-x-auto bg-[#171717]">
+            <table className="w-full text-left text-xs min-w-[720px]">
               <thead className="bg-[#1f1f1f] border-b border-[#2e2e2e] text-zinc-400 font-semibold uppercase tracking-wider">
                 <tr>
                   <th className="py-2.5 px-3">Fecha / Hora</th>
@@ -431,7 +431,7 @@ export default function IotPrintingPanel({
         <div className="fixed inset-0 z-50 bg-black/80 flex items-center justify-center p-4">
           <form
             onSubmit={handleSavePrinter}
-            className="bg-[#171717] border border-[#2e2e2e] rounded-lg max-w-md w-full p-5 space-y-4 shadow-2xl"
+            className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-lg max-w-md w-full p-5 space-y-4 shadow-2xl"
           >
             <div className="flex items-center justify-between border-b border-[#2e2e2e] pb-3">
               <h2 className="text-sm font-bold text-zinc-100 flex items-center gap-2">

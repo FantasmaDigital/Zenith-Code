@@ -303,9 +303,9 @@ export default function ServicesSettings({
         </div>
       </Section>
 
-      {/* 2. AGENTE COMERCIAL IA (ARM - AI RELATIONSHIP MANAGER) */}
+      {/* 2. AGENTE COMERCIAL IA (ARM - AI RELATIONSHIP MANAGEMENT) */}
       <Section
-        title="🤖 Agente Comercial IA (ARM - AI Relationship Manager)"
+        title="🤖 Agente Comercial IA (ARM - AI Relationship Management)"
         hint="Personaliza la estrategia de venta y el estilo con el que la IA interactúa por WhatsApp o Chat Web."
         icon={Bot}
       >

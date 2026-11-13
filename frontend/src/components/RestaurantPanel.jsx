@@ -1888,7 +1888,7 @@ export default function RestaurantPanel({
       {/* MODAL: CREAR/EDITAR PLATILLO */}
       {showItemModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-2 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-md bg-[#171717] border border-[#2e2e2e] rounded-md p-4 space-y-2">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto w-full max-w-md bg-[#171717] border border-[#2e2e2e] rounded-md p-4 space-y-2">
             <div className="flex items-center justify-between pb-2 border-b border-[#2e2e2e]">
               <h3 className="text-base font-medium text-zinc-100 flex items-center gap-2">
                 <UtensilsCrossed size={18} style={{ color: themeColor }} />
@@ -1905,7 +1905,7 @@ export default function RestaurantPanel({
                 <input type="text" required value={itemForm.name} onChange={e => setItemForm({ ...itemForm, name: e.target.value })} placeholder="Ej: Pupusa revuelta" className={inputClass} />
               </div>
 
-              <div className="grid grid-cols-3 gap-2.5">
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
                 <div>
                   <label className="block text-xs font-semibold text-zinc-300 mb-1">Precio ($)</label>
                   <input type="number" step="0.01" min="0" required value={itemForm.price} onChange={e => setItemForm({ ...itemForm, price: e.target.value })} placeholder="1.50" className={`${inputClass} font-mono`} />
@@ -1978,7 +1978,7 @@ export default function RestaurantPanel({
       {/* MODAL: TICKET DE COCINA */}
       {ticket && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-2 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-sm bg-[#171717] border border-[#2e2e2e] rounded-md p-4 space-y-2 shadow-2xl">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto w-full max-w-sm bg-[#171717] border border-[#2e2e2e] rounded-md p-4 space-y-2 shadow-2xl">
             <div className="flex items-center justify-between pb-2 border-b border-[#2e2e2e]">
               <h3 className="text-sm font-semibold text-zinc-100">Ticket de cocina #{ticket.id}</h3>
               <button onClick={() => setTicket(null)} className="text-zinc-400 hover:text-zinc-200 p-1"><X size={16} /></button>
@@ -2011,7 +2011,7 @@ export default function RestaurantPanel({
       {/* MODAL: COBRAR Y EMITIR FACTURA / DTE */}
       {payTargetOrder && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-3 bg-black/80 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-md bg-[#171717] border border-[#2e2e2e] rounded-lg p-5 space-y-4 shadow-2xl">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto w-full max-w-md bg-[#171717] border border-[#2e2e2e] rounded-lg p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-[#2e2e2e]">
               <div>
                 <h3 className="text-sm font-bold text-zinc-100 flex items-center gap-2">
@@ -2150,7 +2150,7 @@ export default function RestaurantPanel({
       {/* MODAL: CANCELAR ORDEN */}
       {cancelTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-2 bg-black/75 backdrop-blur-sm animate-fadeIn">
-          <div className="w-full max-w-md bg-[#171717] border border-[#2e2e2e] rounded-md p-4 space-y-2 shadow-2xl">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto w-full max-w-md bg-[#171717] border border-[#2e2e2e] rounded-md p-4 space-y-2 shadow-2xl">
             <div className="flex items-center justify-between pb-2 border-b border-[#2e2e2e]">
               <h3 className="text-sm font-semibold text-rose-300 flex items-center gap-1.5">
                 <AlertCircle size={16} />

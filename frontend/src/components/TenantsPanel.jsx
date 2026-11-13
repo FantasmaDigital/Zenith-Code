@@ -1000,7 +1000,7 @@ export default function TenantsPanel({
       {/* MODAL: INVITACIÓN AL ADMINISTRADOR DE LA NUEVA EMPRESA */}
       {createdInvite && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
             <h2 className="text-sm font-semibold text-zinc-100">Empresa «{createdInvite.company}» creada</h2>
             <p className="text-xs text-zinc-400">
               {createdInvite.sent_via === 'email' && 'La invitación del administrador se envió por correo.'}
@@ -1042,7 +1042,7 @@ export default function TenantsPanel({
       {/* MODAL: CAMBIO DE CONTRASEÑA */}
       {pwdModalTenant && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-[#262626]">
               <div className="flex items-center gap-2">
                 <KeyRound size={17} className="text-amber-400" />
@@ -1107,7 +1107,7 @@ export default function TenantsPanel({
       {/* MODAL: ELIMINAR EMPRESA */}
       {deleteTenant && createPortal(
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
-          <div className="bg-[#171717] border border-rose-500/30 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-rose-500/30 rounded-xl max-w-md w-full p-6 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between pb-3 border-b border-[#262626]">
               <div className="flex items-center gap-2">
                 <Trash2 size={17} className="text-rose-400" />

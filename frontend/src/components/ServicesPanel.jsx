@@ -147,7 +147,6 @@ export default function ServicesPanel({
   const [services, setServices] = useState([]);
   const [loadingServices, setLoadingServices] = useState(true);
   const [serviceSearch, setServiceSearch] = useState('');
-  const [selectedCategory, setSelectedCategory] = useState('all');
   const [serviceModal, setServiceModal] = useState(null); // null | 'new' | 'edit'
   const [editingService, setEditingService] = useState(null);
   const [serviceForm, setServiceForm] = useState({
@@ -262,20 +261,12 @@ export default function ServicesPanel({
   // -------------------------------------------------------------------------
   // SERVICIOS: Acciones
   // -------------------------------------------------------------------------
-  const categories = useMemo(() => {
-    return [...new Set(services.map(s => s.category || 'General'))];
-  }, [services]);
-
+  // Solo búsqueda (sin botones de categoría): también encuentra por categoría
   const filteredServices = useMemo(() => {
-    return services.filter(s => {
-      if (selectedCategory !== 'all' && (s.category || 'General') !== selectedCategory) return false;
-      if (serviceSearch) {
-        const q = serviceSearch.toLowerCase();
-        return s.name?.toLowerCase().includes(q) || s.description?.toLowerCase().includes(q);
-      }
-      return true;
-    });
-  }, [services, selectedCategory, serviceSearch]);
+    const q = serviceSearch.trim().toLowerCase();
+    if (!q) return services;
+    return services.filter(s => [s.name, s.description, s.category].some(v => (v || '').toLowerCase().includes(q)));
+  }, [services, serviceSearch]);
 
   const handleSaveService = async (e) => {
     e.preventDefault();
@@ -717,19 +708,6 @@ export default function ServicesPanel({
                   placeholder="Buscar en servicios..."
                   className="w-full bg-[#121212] border border-[#2e2e2e] rounded-md pl-8 pr-3 py-1.5 text-xs text-zinc-200 placeholder-zinc-500 outline-none focus:border-zinc-500"
                 />
-              </div>
-              <div className="flex flex-wrap gap-1 text-xs">
-                {['all', ...categories].map(cat => (
-                  <button
-                    key={cat}
-                    onClick={() => setSelectedCategory(cat)}
-                    className={`px-2.5 py-1 rounded text-xs font-medium transition-all ${
-                      selectedCategory === cat ? 'bg-zinc-800 text-zinc-100 border border-zinc-700' : 'text-zinc-400 hover:text-zinc-300'
-                    }`}
-                  >
-                    {cat === 'all' ? 'Todas' : cat}
-                  </button>
-                ))}
               </div>
             </div>
           )}
@@ -1216,7 +1194,7 @@ export default function ServicesPanel({
           ============================================================== */}
       {serviceModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 animate-fadeIn">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-md max-w-md w-full shadow-2xl p-4 space-y-3">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-md max-w-md w-full shadow-2xl p-4 space-y-3">
             <div className="flex items-center justify-between pb-2 border-b border-[#2e2e2e]">
               <h2 className="text-sm font-semibold text-zinc-100">
                 {editingService ? 'Editar Servicio' : 'Nuevo Servicio'}
@@ -1465,7 +1443,7 @@ export default function ServicesPanel({
           ============================================================== */}
       {leadModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 animate-fadeIn">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-md max-w-md w-full shadow-2xl p-4 space-y-3">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-md max-w-md w-full shadow-2xl p-4 space-y-3">
             <div className="flex items-center justify-between pb-2 border-b border-[#2e2e2e]">
               <h2 className="text-sm font-semibold text-zinc-100">
                 {editingLead ? 'Editar Lead' : 'Nuevo Lead'}
@@ -1572,7 +1550,7 @@ export default function ServicesPanel({
           ============================================================== */}
       {proposalModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 animate-fadeIn">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-md max-w-md w-full shadow-2xl p-4 space-y-3">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-md max-w-md w-full shadow-2xl p-4 space-y-3">
             <div className="flex items-center justify-between pb-2 border-b border-[#2e2e2e]">
               <h2 className="text-sm font-semibold text-zinc-100">
                 {editingProposal ? 'Editar Propuesta' : 'Nueva Propuesta'}
@@ -1740,7 +1718,7 @@ function ImportAiModal({ apiFetch, apiBase, themeColor, showToast, onClose, onIm
 
   return (
     <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-3 animate-fadeIn">
-      <div className={`bg-[#171717] border border-[#2e2e2e] rounded-md ${step === 'review' ? 'max-w-3xl' : 'max-w-lg'} w-full shadow-2xl p-4 space-y-3`}>
+      <div className={`max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-md ${step === 'review' ? 'max-w-3xl' : 'max-w-lg'} w-full shadow-2xl p-4 space-y-3`}>
         <div className="flex items-center justify-between pb-2 border-b border-[#2e2e2e]">
           <div className="flex items-center gap-2 text-zinc-100 font-semibold text-sm">
             <Sparkles size={15} className="text-amber-400" />
@@ -1877,7 +1855,7 @@ function ImportAiModal({ apiFetch, apiBase, themeColor, showToast, onClose, onIm
                           }}
                           className="w-full bg-[#1c1c1c] border border-[#2e2e2e] rounded px-2 py-1 text-xs text-zinc-300 outline-none resize-none"
                         />
-                        <div className="grid grid-cols-3 gap-2 text-[11px]">
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 text-[11px]">
                           <div>
                             <span className="text-zinc-500 block">Precio Desde ($)</span>
                             <input

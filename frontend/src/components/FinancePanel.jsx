@@ -958,7 +958,7 @@ export default function FinancePanel({
           ============================================================== */}
       {showOpenModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-lg max-w-md w-full p-5 space-y-4 shadow-xl">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-lg max-w-md w-full p-5 space-y-4 shadow-xl">
             <div className="flex items-center justify-between border-b border-[#262626] pb-3">
               <div className="flex items-center gap-2">
                 <Unlock size={16} className="text-emerald-400" />
@@ -1176,7 +1176,7 @@ export default function FinancePanel({
           ============================================================== */}
       {showExpenseModal && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-lg max-w-md w-full p-5 space-y-4 shadow-xl">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-lg max-w-md w-full p-5 space-y-4 shadow-xl">
             <div className="flex items-center justify-between border-b border-[#262626] pb-3">
               <div className="flex items-center gap-2">
                 <PlusCircle size={16} className={TX_TYPE_INFO[txForm.type].amount} />
@@ -1190,7 +1190,7 @@ export default function FinancePanel({
             </div>
 
             <form onSubmit={handleCreateTransaction} className="space-y-3 text-xs">
-              <div className="grid grid-cols-4 gap-0.5 p-0.5 bg-[#121212] border border-[#2e2e2e] rounded-md">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-0.5 p-0.5 bg-[#121212] border border-[#2e2e2e] rounded-md">
                 {['expense', 'income', 'withdrawal', 'deposit'].map(type => (
                   <button
                     key={type}
@@ -1306,7 +1306,7 @@ export default function FinancePanel({
 
       {voidTarget && (
         <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-3">
-          <form onSubmit={handleVoid} className="bg-[#171717] border border-[#2e2e2e] rounded-md max-w-md w-full p-5 space-y-3">
+          <form onSubmit={handleVoid} className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-md max-w-md w-full p-5 space-y-3">
             <h3 className="text-sm font-medium text-zinc-100">Anular movimiento #{voidTarget.tx.id}</h3>
             <p className="text-[13px] text-zinc-400">
               {voidTarget.tx.description} · {money(voidTarget.tx.amount)}. El movimiento queda en el libro marcado como anulado y deja de contar en los totales.
@@ -1343,7 +1343,7 @@ export default function FinancePanel({
           ============================================================== */}
       {ticketModal && (
         <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-lg max-w-md w-full p-5 space-y-3 shadow-xl">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-lg max-w-md w-full p-5 space-y-3 shadow-xl">
             <div className="flex items-center justify-between border-b border-[#262626] pb-2.5">
               <div className="flex items-center gap-2">
                 <Receipt size={16} className="text-emerald-400" />

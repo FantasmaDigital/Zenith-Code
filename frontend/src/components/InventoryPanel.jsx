@@ -1632,7 +1632,7 @@ export default function InventoryPanel({
           ============================================================== */}
       {showItemModal && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-lg w-full p-5 space-y-4 shadow-2xl animate-fadeIn">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-lg w-full p-5 space-y-4 shadow-2xl animate-fadeIn">
             <div className="flex items-center justify-between pb-2 border-b border-[#242424]">
               <h3 className="font-semibold text-sm text-zinc-100">
                 {editingItem ? 'Editar Artículo' : 'Nuevo Artículo de Inventario'}
@@ -1829,7 +1829,7 @@ export default function InventoryPanel({
           ============================================================== */}
       {showAdjustModal && adjustTarget && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-sm w-full p-5 space-y-4 shadow-2xl animate-fadeIn">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-sm w-full p-5 space-y-4 shadow-2xl animate-fadeIn">
             <div className="flex items-center justify-between pb-2 border-b border-[#242424]">
               <h3 className="font-semibold text-sm text-zinc-100">
                 Ajuste de Stock: {adjustTarget.name}
@@ -1908,7 +1908,7 @@ export default function InventoryPanel({
           ============================================================== */}
       {showPurchaseModal && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-md w-full p-5 space-y-4 shadow-2xl animate-fadeIn">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-md w-full p-5 space-y-4 shadow-2xl animate-fadeIn">
             <div className="flex items-center justify-between pb-2 border-b border-[#242424]">
               <h3 className="font-semibold text-sm text-zinc-100">
                 Registrar Entrada / Compra de Mercancía
@@ -2058,7 +2058,7 @@ export default function InventoryPanel({
           ============================================================== */}
       {showWasteModal && (
         <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4">
-          <div className="bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-sm w-full p-5 space-y-4 shadow-2xl animate-fadeIn">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#171717] border border-[#2e2e2e] rounded-xl max-w-sm w-full p-5 space-y-4 shadow-2xl animate-fadeIn">
             <div className="flex items-center justify-between pb-2 border-b border-[#242424]">
               <h3 className="font-semibold text-sm text-zinc-100 flex items-center gap-1.5">
                 <Trash2 size={15} className="text-rose-400" />

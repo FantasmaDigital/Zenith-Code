@@ -99,6 +99,8 @@ import InboxPanel from './components/InboxPanel';
 import UsersPanel from './components/UsersPanel';
 import LoyaltyPanel, { PublicLoyaltyCard, PublicStampFlow, getPublicCardParams } from './components/LoyaltyPanel';
 import LandingScreen from './components/LandingScreen';
+import { CookieNotice, LegalLinks, LegalPage, getLegalPage } from './components/LegalPages';
+import { ForgotPasswordForm, ResetPasswordForm, getResetToken } from './components/PasswordRecovery';
 
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
 
@@ -190,7 +192,7 @@ const ROOT_TABS = new Set([
   'inbox', 'bandeja',
   'services', 'servicios', 'leads', 'proposals', 'propuestas',
   'loyalty', 'fidelidad', 'tarjetas',
-  'auth'
+  'auth', 'privacidad', 'cookies'
 ]);
 
 // Empresa de la pantalla de acceso: /auth/:empresa (o /:empresa/... si llegó sin sesión)
@@ -329,6 +331,9 @@ const HANDOFF_TAG_PRESETS = [
   'CONSULTA GENERAL',
   'ATENCIÓN HUMANA'
 ];
+
+// Solo enlaces http(s): una URL «javascript:» guardada en datos externos nunca se ejecuta al hacer clic
+const safeHref = (u) => (/^https?:\/\//i.test(String(u || '').trim()) ? String(u).trim() : undefined);
 
 function getTagBadgeStyle(tag) {
   const t = (tag || '').toUpperCase().trim();
@@ -1310,7 +1315,7 @@ function Dashboard({ onLogout }) {
 
       try {
         if (companyName) localStorage.setItem(`zenith_cached_company_${tenantKey}`, companyName);
-        if (resRoot.bot_name) localStorage.setItem(`zenith_cached_bot_${tenantKey}`, resRoot.bot_name);
+        if (resRoot.bot_name || resRoot.agent) localStorage.setItem(`zenith_cached_bot_${tenantKey}`, resRoot.bot_name || resRoot.agent);
         if (resRoot.company_logo !== undefined) localStorage.setItem(`zenith_cached_logo_${tenantKey}`, resRoot.company_logo || '');
         if (resRoot.primary_color) localStorage.setItem(`zenith_cached_color_${tenantKey}`, resRoot.primary_color);
       } catch {}
@@ -1322,7 +1327,7 @@ function Dashboard({ onLogout }) {
         active_provider: resRoot.active_provider || 'gemini',
         company: companyName,
         tenant_active: resRoot.tenant_active ?? true,
-        bot_name: resRoot.bot_name || 'Asistente Operativo',
+        bot_name: resRoot.bot_name || resRoot.agent || localStorage.getItem(`zenith_cached_bot_${tenantKey}`) || '',
         company_logo: resRoot.company_logo || '',
         bot_avatar: resRoot.bot_avatar || '',
         primary_color: resRoot.primary_color || '#3ecf8e',
@@ -1861,7 +1866,7 @@ function Dashboard({ onLogout }) {
       {/* ==============================================================
           SIDEBAR (ESTILO SUPABASE STUDIO)
           ============================================================== */}
-      <aside className={`fixed inset-y-0 left-0 z-50 w-60 bg-[#171717] border-r border-[#2e2e2e] flex flex-col transition-transform duration-200 md:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+      <aside className={`fixed inset-y-0 left-0 z-50 w-[86vw] max-w-[340px] md:w-60 bg-[#171717] border-r border-[#2e2e2e] flex flex-col transition-transform duration-200 md:translate-x-0 ${mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'}`}>
         {/* Brand Header */}
         <div className="h-14 px-3 border-b border-[#2e2e2e] flex items-center justify-between">
           {!stats.company ? (
@@ -2137,12 +2142,12 @@ function Dashboard({ onLogout }) {
       <div className="flex-1 md:ml-60 flex flex-col min-h-screen min-w-0">
 
         {/* Top Header */}
-        <header className="h-14 px-4 md:px-6 bg-[#121212]/90 backdrop-blur-md border-b border-[#2e2e2e] sticky top-0 z-30 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <button className="md:hidden p-2 text-zinc-400 hover:text-white rounded-md border border-[#2e2e2e]" onClick={() => setMobileMenuOpen(true)}>
+        <header className="h-14 px-3 md:px-6 bg-[#121212]/90 backdrop-blur-md border-b border-[#2e2e2e] sticky top-0 z-30 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2 min-w-0">
+            <button className="md:hidden p-2 text-zinc-400 hover:text-white rounded-md border border-[#2e2e2e] shrink-0" onClick={() => setMobileMenuOpen(true)} aria-label="Abrir menú">
               <Menu size={18} />
             </button>
-            <div className="flex items-center gap-2 text-sm">
+            <div className="flex items-center gap-2 text-sm min-w-0">
               {isSuperadmin() ? (
                 <div className="relative">
                   <button
@@ -2160,7 +2165,7 @@ function Dashboard({ onLogout }) {
                   >
                     <Building2 size={13} className="text-emerald-400 shrink-0" />
                     {stats.company ? (
-                      <span className="max-w-[130px] truncate">{stats.company}</span>
+                      <span className="max-w-[90px] sm:max-w-[130px] truncate">{stats.company}</span>
                     ) : (
                       <span className="inline-block w-20 h-3 bg-zinc-800 rounded animate-pulse" />
                     )}
@@ -2170,7 +2175,7 @@ function Dashboard({ onLogout }) {
                   {tenantDropdownOpen && (
                     <>
                       <div className="fixed inset-0 z-40" onClick={() => setTenantDropdownOpen(false)} />
-                      <div className="absolute left-0 mt-1.5 w-72 bg-[#171717] border border-[#2e2e2e] rounded-lg shadow-2xl py-1.5 z-50 animate-fadeIn">
+                      <div className="absolute left-0 mt-1.5 w-72 max-w-[calc(100vw-24px)] bg-[#171717] border border-[#2e2e2e] rounded-lg shadow-2xl py-1.5 z-50 animate-fadeIn">
                         <div className="px-3 py-1.5 text-[11px] font-semibold text-zinc-400 uppercase tracking-wider border-b border-[#242424]">
                           Empresas
                         </div>
@@ -2227,19 +2232,19 @@ function Dashboard({ onLogout }) {
                 </div>
               ) : (
                 stats.company ? (
-                  <span className="text-zinc-500 font-medium">{stats.company}</span>
+                  <span className="hidden sm:inline text-zinc-500 font-medium truncate max-w-[160px]">{stats.company}</span>
                 ) : (
                   <span className="inline-block w-20 h-3.5 bg-zinc-800 rounded animate-pulse" />
                 )
               )}
-              <span className="text-zinc-600">/</span>
-              <span className="text-zinc-200 font-medium">
+              <span className={`text-zinc-600 ${isSuperadmin() ? '' : 'hidden sm:inline'}`}>/</span>
+              <span className="text-zinc-200 font-medium truncate min-w-0">
                 {ROUTES[activeTab]?.breadcrumb || 'Knowledge Base'}
               </span>
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <div className="hidden sm:flex items-center gap-2">
               {hasArm && (
               <button
@@ -2463,7 +2468,7 @@ function Dashboard({ onLogout }) {
                         <div className="flex items-center gap-2 text-xs text-zinc-400">
                           <span>Categoría: <strong className="text-zinc-300">{item.category}</strong></span>
                           {item.source_url && (
-                            <a href={item.source_url} target="_blank" rel="noreferrer" className="text-blue-400 hover:underline flex items-center gap-1">
+                            <a href={safeHref(item.source_url)} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:underline flex items-center gap-1">
                               <span>URL</span>
                               <ExternalLink size={10} />
                             </a>
@@ -2750,7 +2755,7 @@ function Dashboard({ onLogout }) {
                             </div>
 
                             <a
-                              href={item.url}
+                              href={safeHref(item.url)}
                               target="_blank"
                               rel="noreferrer"
                               onClick={e => e.stopPropagation()}
@@ -3514,17 +3519,6 @@ function Dashboard({ onLogout }) {
                 <div>
                   <h1 className="text-xl font-medium tracking-tight text-zinc-100">Ajustes de Marca</h1>
                   <p className="text-sm text-zinc-400 mt-1">Configura logotipos, colores, identidad corporativa, números de contacto y claves de IA guardados en la Base de Datos.</p>
-                </div>
-                <div
-                  className="inline-flex items-center gap-2 px-2.5 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap self-start sm:self-auto border"
-                  style={{
-                    backgroundColor: `rgba(${themeRgb}, 0.12)`,
-                    borderColor: `rgba(${themeRgb}, 0.25)`,
-                    color: themeColor
-                  }}
-                >
-                  <Database size={14} />
-                  <span>Base de Datos: {stats?.database_type || 'PostgreSQL'}</span>
                 </div>
               </div>
 
@@ -4495,6 +4489,8 @@ function Dashboard({ onLogout }) {
                 themeColor={themeColor}
                 showToast={showToast}
                 currentUserId={getCurrentUserId()}
+                showOwnerAccess={getCurrentUserId() === null && (!isSuperadmin() || !getActingTenant())}
+                onOwnerToken={(data) => storeToken({ ...getStoredAuth(), ...data })}
               />
             )}
 
@@ -4559,7 +4555,7 @@ function Dashboard({ onLogout }) {
                 themeColor={themeColor}
                 showToast={showToast}
                 conversationId={inboxId}
-                onSelect={(id) => setInboxId(String(id))}
+                onSelect={(id) => setInboxId(id ? String(id) : null)}
                 onOpenCustomer={(id) => { setCustomerId(String(id)); navigateTo('customers'); }}
               />
             )}
@@ -4659,7 +4655,7 @@ function Dashboard({ onLogout }) {
       {/* Modal para pausar manualmente a un usuario */}
       {showManualPauseModal && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2">
-          <div className="bg-[#1c1c1c] border border-[#2e2e2e] rounded-md max-w-md w-full animate-scaleUp">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#1c1c1c] border border-[#2e2e2e] rounded-md max-w-md w-full animate-scaleUp">
             <div className="p-2 border-b border-[#2e2e2e] flex items-center justify-between">
               <div className="flex items-center gap-2 text-amber-400 font-medium text-sm">
                 <Pause size={16} />
@@ -4768,7 +4764,7 @@ function Dashboard({ onLogout }) {
       {/* Modal para editar Tag Directo y Nota para el Asesor */}
       {editingHandoff && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-2">
-          <div className="bg-[#1c1c1c] border border-[#2e2e2e] rounded-md max-w-lg w-full animate-scaleUp">
+          <div className="max-h-[calc(100dvh-24px)] overflow-y-auto bg-[#1c1c1c] border border-[#2e2e2e] rounded-md max-w-lg w-full animate-scaleUp">
             <div className="p-2 border-b border-[#2e2e2e] flex items-center justify-between">
               <div className="flex items-center gap-2 text-amber-400 font-medium text-sm">
                 <Tag size={16} />
@@ -5262,6 +5258,9 @@ function LoginScreen({ onLogin }) {
   });
   // Empresa: siempre la de la URL (/:empresa). La raíz no muestra este formulario.
   const [tenant] = useState(() => getAuthSlug().trim().toLowerCase());
+  // Recuperación por correo: formulario para pedir el enlace, o el de contraseña nueva si se llegó desde él
+  const [recovery, setRecovery] = useState(false);
+  const [resetToken, setResetToken] = useState(getResetToken);
   const [notFound, setNotFound] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [capsLock, setCapsLock] = useState(false);
@@ -5378,7 +5377,13 @@ function LoginScreen({ onLogin }) {
           <p className="mt-1.5 text-sm text-zinc-400">Inicia sesión para administrar a {botName}.</p>
         </div>
 
-        {notFound ? (
+        {resetToken ? (
+          <ResetPasswordForm apiBase={API_BASE} token={resetToken} color={color} textColor={readableTextOn(color)}
+            onDone={() => setResetToken('')} />
+        ) : recovery ? (
+          <ForgotPasswordForm apiBase={API_BASE} tenant={tenant} color={color} textColor={readableTextOn(color)}
+            onBack={() => setRecovery(false)} />
+        ) : notFound ? (
           <div className="bg-[#171717] border border-[#2e2e2e] rounded-lg p-6 text-center space-y-3">
             <p className="text-sm text-zinc-200">No encontramos esa empresa. Revisa el enlace que te compartieron.</p>
             <a href="/" className="text-[13px] text-zinc-400 hover:text-white">Ir al inicio</a>
@@ -5430,7 +5435,7 @@ function LoginScreen({ onLogin }) {
                 autoComplete="username"
                 autoCapitalize="none"
                 spellCheck={false}
-                placeholder="tu@correo.com · admin"
+                placeholder="tu@correo.com"
                 className="w-full h-10 bg-[#121212] border border-[#2e2e2e] rounded-md px-3 text-sm outline-none transition-colors"
               />
             </div>
@@ -5488,6 +5493,13 @@ function LoginScreen({ onLogin }) {
           >
             {ownerMode ? 'Entrar con mi correo o WhatsApp' : 'Entrar con la contraseña de una empresa'}
           </button>
+          <button
+            type="button"
+            onClick={() => { setRecovery(true); setError(''); }}
+            className="w-full text-center text-[12px] text-zinc-500 hover:text-zinc-300"
+          >
+            ¿Olvidaste tu contraseña?
+          </button>
         </form>
         )}
 
@@ -5499,6 +5511,7 @@ function LoginScreen({ onLogin }) {
       <footer className="mt-10 flex items-center gap-1.5 text-[12px] text-zinc-600">
         <ShieldCheck size={13} /> Panel protegido · Impulsado por Zenith
       </footer>
+      <LegalLinks className="mt-2" />
     </div>
   );
 }
@@ -5663,6 +5676,7 @@ function AcceptInviteScreen({ token, onDone }) {
       <footer className="mt-10 flex items-center gap-1.5 text-[12px] text-zinc-600">
         <ShieldCheck size={13} /> Panel protegido · Impulsado por Zenith
       </footer>
+      <LegalLinks className="mt-2" />
     </div>
   );
 }
@@ -5685,6 +5699,11 @@ export default function App() {
     setAuthenticated(false);
   };
 
+  const legalPage = getLegalPage();
+  if (legalPage) {
+    // Políticas públicas: se ven con o sin sesión
+    return <LegalPage page={legalPage} />;
+  }
   if (publicCard) {
     // Enlace de la tarjeta de fidelidad del cliente final: no requiere login
     return publicCard.type === 'stamp'
@@ -5699,14 +5718,16 @@ export default function App() {
       />
     );
   }
-  if (!authenticated) {
+  // El enlace de «restablecer contraseña» debe abrir su formulario aunque haya una sesión en este navegador
+  const resetLink = Boolean(getResetToken()) && window.location.pathname.toLowerCase().startsWith('/auth/');
+  if (!authenticated || resetLink) {
     // Sin empresa en la URL (/ o /auth): página comercial, sin formulario de acceso
     const slug = getAuthSlug();
-    if (!slug) return <LandingScreen />;
+    if (!slug) return <><LandingScreen /><CookieNotice /></>;
     if (!window.location.pathname.toLowerCase().startsWith('/auth/')) {
       window.history.replaceState(null, '', `/auth/${slug}`);
     }
-    return <LoginScreen key={slug} onLogin={() => setAuthenticated(true)} />;
+    return <><LoginScreen key={slug} onLogin={() => setAuthenticated(true)} /><CookieNotice /></>;
   }
   return <Dashboard onLogout={handleLogout} />;
 }

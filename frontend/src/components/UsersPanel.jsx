@@ -63,7 +63,73 @@ function CopyButton({ text, label = 'Copiar enlace' }) {
  * Usuarios de la empresa: invitar por WhatsApp, correo o enlace, asignar roles, desactivar y eliminar.
  * Solo lo ven el propietario (contraseña de la empresa) y los administradores.
  */
-export default function UsersPanel({ apiFetch, apiBase, themeColor = '#3ecf8e', showToast, currentUserId }) {
+// Acceso del propietario: correo + contraseña de la empresa, guardados en la base (la contraseña con hash).
+// Al configurarlo, «admin» deja de servir para entrar.
+function OwnerAccessCard({ apiFetch, apiBase, showToast, onToken }) {
+  const [email, setEmail] = useState('');
+  const [current, setCurrent] = useState('');
+  const [next, setNext] = useState('');
+  const [saved, setSaved] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    apiFetch(`${apiBase}/api/auth/owner`).then(r => (r.ok ? r.json() : null)).then(d => {
+      if (d) { setSaved(d.email || ''); setEmail(d.email || ''); }
+    }).catch(() => {});
+  }, [apiFetch, apiBase]);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    setError('');
+    if (next && next.length < 8) { setError('La contraseña nueva debe tener al menos 8 caracteres.'); return; }
+    setBusy(true);
+    try {
+      const res = await apiFetch(`${apiBase}/api/auth/owner`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: email.trim(), current_password: current, new_password: next || null })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(typeof data.detail === 'string' ? data.detail : 'No se pudo guardar.'); return; }
+      onToken?.(data);
+      setSaved(email.trim().toLowerCase());
+      setCurrent(''); setNext('');
+      showToast?.('Acceso del propietario actualizado');
+    } finally { setBusy(false); }
+  };
+
+  const input = 'w-full h-9 bg-[#121212] border border-[#2e2e2e] rounded-md px-3 text-[13px] text-zinc-100 outline-none focus:border-zinc-500';
+  return (
+    <form onSubmit={submit} className="bg-[#171717] border border-[#2e2e2e] rounded-lg p-5 space-y-3">
+      <div>
+        <h3 className="text-sm font-medium text-zinc-100">Acceso del propietario</h3>
+        <p className="text-[12px] text-zinc-400 mt-1">
+          {saved
+            ? <>Entras con <b className="text-zinc-200">{saved}</b>. «admin» ya no funciona para esta empresa.</>
+            : 'Hoy se entra con «admin». Define tu correo para entrar con él en su lugar.'}
+        </p>
+      </div>
+      <div className="grid sm:grid-cols-3 gap-3">
+        <label className="block text-[12px] text-zinc-300">Correo
+          <input type="email" required value={email} onChange={e => setEmail(e.target.value)} autoComplete="username" className={`${input} mt-1`} />
+        </label>
+        <label className="block text-[12px] text-zinc-300">Contraseña actual
+          <input type="password" required value={current} onChange={e => setCurrent(e.target.value)} autoComplete="current-password" className={`${input} mt-1`} />
+        </label>
+        <label className="block text-[12px] text-zinc-300">Contraseña nueva (opcional)
+          <input type="password" value={next} onChange={e => setNext(e.target.value)} autoComplete="new-password" placeholder="Dejar igual" className={`${input} mt-1`} />
+        </label>
+      </div>
+      {error && <p className="text-[12px] text-rose-400">{error}</p>}
+      <button type="submit" disabled={busy} className="h-9 px-4 rounded-md text-[13px] font-medium border border-[#3e3e3e] bg-[#232323] hover:bg-[#2e2e2e] text-zinc-100 disabled:opacity-50">
+        {busy ? 'Guardando…' : 'Guardar acceso'}
+      </button>
+    </form>
+  );
+}
+
+export default function UsersPanel({ apiFetch, apiBase, themeColor = '#3ecf8e', showToast, currentUserId, showOwnerAccess = false, onOwnerToken }) {
   const [data, setData] = useState({ users: [], invitations: [], roles: [], channels: null });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -159,6 +225,7 @@ export default function UsersPanel({ apiFetch, apiBase, themeColor = '#3ecf8e', 
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
+      {showOwnerAccess && <OwnerAccessCard apiFetch={apiFetch} apiBase={apiBase} showToast={showToast} onToken={onOwnerToken} />}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-medium text-zinc-100 flex items-center gap-2"><Users size={20} /> Usuarios</h2>
@@ -356,7 +423,7 @@ export default function UsersPanel({ apiFetch, apiBase, themeColor = '#3ecf8e', 
           <form
             onSubmit={submitInvite}
             onClick={e => e.stopPropagation()}
-            className="w-full max-w-md bg-[#171717] border border-[#2e2e2e] rounded-lg p-5 space-y-4"
+            className="max-h-[calc(100dvh-24px)] overflow-y-auto w-full max-w-md bg-[#171717] border border-[#2e2e2e] rounded-lg p-5 space-y-4"
           >
             <div className="flex items-center justify-between">
               <h3 className="text-base font-medium text-zinc-100 flex items-center gap-2"><UserPlus size={17} /> Invitar usuario</h3>
