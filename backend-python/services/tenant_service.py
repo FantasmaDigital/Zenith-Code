@@ -41,7 +41,10 @@ def default_public_slug() -> str:
     """Slug con el que la empresa principal aparece en la URL (/fantasma-digital/...).
     Se toma de DEFAULT_TENANT_SLUG o, si no está, del nombre de la empresa (COMPANY_NAME)."""
     import os
-    for candidate in (os.getenv("DEFAULT_TENANT_SLUG", ""), _slugify(os.getenv("COMPANY_NAME", ""))):
+    # Mismo valor por defecto que COMPANY_NAME en config.py, para que en producción sin esa variable
+    # el slug no caiga en «principal».
+    company = os.getenv("COMPANY_NAME", "") or "Fantasma Digital"
+    for candidate in (os.getenv("DEFAULT_TENANT_SLUG", ""), _slugify(company)):
         slug = (candidate or "").strip().lower()
         if slug and slug not in RESERVED_SLUGS and SLUG_RE.match(slug):
             return slug
