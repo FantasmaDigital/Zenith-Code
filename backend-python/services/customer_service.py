@@ -566,13 +566,15 @@ class CustomerService(TenantReadyMixin):
                 cfg = {"temperature": 0.2, "max_output_tokens": 600, "response_mime_type": "application/json"}
                 if hasattr(types, "ThinkingConfig"):
                     cfg["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
-                resp = genai.Client(api_key=key, http_options={"api_version": "v1beta"}).models.generate_content(
+                # El cliente debe seguir vivo durante la petición (si no, «the client has been closed»)
+                client = genai.Client(api_key=key, http_options={"api_version": "v1beta"})
+                resp = client.models.generate_content(
                     model=settings.GEMINI_MODEL or "gemini-2.5-flash", contents=prompt,
                     config=types.GenerateContentConfig(**cfg))
                 if resp and resp.text:
                     return json.loads(resp.text)
         except Exception as e:
-            logger.debug(f"Resumen con Gemini falló: {e}")
+            logger.warning(f"Resumen con Gemini falló: {e}")
         try:
             key = (settings.OPENAI_API_KEY or "").strip()
             if key and not key.startswith("sk-fake"):
@@ -583,7 +585,7 @@ class CustomerService(TenantReadyMixin):
                     messages=[{"role": "user", "content": prompt}])
                 return json.loads(resp.choices[0].message.content)
         except Exception as e:
-            logger.debug(f"Resumen con OpenAI falló: {e}")
+            logger.warning(f"Resumen con OpenAI falló: {e}")
         return None
 
 
