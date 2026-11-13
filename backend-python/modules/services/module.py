@@ -47,6 +47,22 @@ def _tool_guardar_lead(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]
         logger.error(f"Error en herramienta guardar_lead: {e}")
         return {"ok": False, "error": str(e)}
 
+def _tool_registrar_reunion(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
+    """Registra en el CRM una reunión que el cliente confirmó."""
+    try:
+        lead = prof_services_service.register_meeting(ctx.session_id, args)
+        try:
+            from services.customer_service import customer_service
+            customer_service.remember(ctx.session_id, tag="reunion")
+        except Exception:
+            pass
+        return {"ok": True, "lead_id": lead.get("id"), "reunion": lead.get("meeting_at"),
+                "mensaje": "Reunión registrada en el CRM. Confírmasela al cliente con la fecha/hora."}
+    except Exception as e:
+        logger.error(f"Error en herramienta registrar_reunion: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 def _tool_consultar_servicios(ctx: ToolContext, args: Dict[str, Any]) -> Dict[str, Any]:
     """Consulta en tiempo real el catálogo de servicios, precios y tiempos."""
     try:
@@ -150,8 +166,14 @@ class ServicesModule(ZenithModule):
             if meeting_link:
                 lines.append(
                     f"\n[AGENDAMIENTO DE REUNIONES O DEMOS]\n"
-                    f"Si el cliente desea una videollamada, reunión técnica o demo en vivo, comparte el enlace oficial: {meeting_link}"
+                    f"Si el cliente desea una videollamada, reunión técnica o demo en vivo, comparte el enlace oficial: {meeting_link}\n"
+                    "Tú NO puedes reservar en ese enlace: nunca digas que la reunión «quedó agendada» solo por enviarlo. "
+                    "Pide al cliente que te avise cuando reserve (o qué día y hora eligió) y entonces usa 'registrar_reunion'."
                 )
+            lines.append(
+                "\n[REUNIONES]\nCuando el cliente confirme una reunión (fecha/hora acordada o reserva hecha), usa "
+                "'registrar_reunion' antes de confirmárselo."
+            )
 
             # Reglas de calificación y captura de leads
             qual_rules = []
@@ -238,6 +260,25 @@ class ServicesModule(ZenithModule):
                     "required": ["nombre"],
                 },
                 handler=_tool_guardar_lead,
+            ),
+            Tool(
+                name="registrar_reunion",
+                description=(
+                    "Registra en el CRM una reunión, llamada o demo con el prospecto. Úsala cuando el cliente CONFIRME "
+                    "una fecha/hora, o diga que ya reservó en el enlace de agenda. También guarda sus datos como lead."
+                ),
+                parameters={
+                    "type": "object",
+                    "properties": {
+                        "nombre": {"type": "string", "description": "Nombre del contacto"},
+                        "fecha_hora": {"type": "string", "description": "Fecha y hora acordada tal como la dijo el cliente (vacío si reservó por enlace y no la dijo)"},
+                        "servicio_interes": {"type": "string", "description": "Tema o servicio de la reunión"},
+                        "empresa": {"type": "string", "description": "Empresa (opcional)"},
+                        "notas": {"type": "string", "description": "Contexto útil para quien atenderá la reunión"},
+                    },
+                    "required": ["nombre"],
+                },
+                handler=_tool_registrar_reunion,
             ),
             Tool(
                 name="consultar_servicios",

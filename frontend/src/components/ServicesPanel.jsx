@@ -45,6 +45,7 @@ import {
 const STATUS_LEAD = {
   nuevo:       { label: 'Nuevo',       badge: 'bg-blue-500/15 text-blue-300 border-blue-500/30',     dot: 'bg-blue-400' },
   contactado:  { label: 'Contactado',  badge: 'bg-amber-500/15 text-amber-300 border-amber-500/30',   dot: 'bg-amber-400' },
+  reunion:     { label: 'Reunión agendada', badge: 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30', dot: 'bg-cyan-400' },
   propuesta:   { label: 'Propuesta',   badge: 'bg-purple-500/15 text-purple-300 border-purple-500/30', dot: 'bg-purple-400' },
   negociacion: { label: 'Negociación', badge: 'bg-orange-500/15 text-orange-300 border-orange-500/30', dot: 'bg-orange-400' },
   cliente:     { label: 'Cliente ✓',   badge: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30', dot: 'bg-emerald-400' },
@@ -860,7 +861,7 @@ export default function ServicesPanel({
       {currentSubTab === 'leads' && (
         <div className="space-y-3">
           {/* Métricas de Leads (Idénticas a Restaurant Historial stats) */}
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-2.5">
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-2.5">
             <div className="p-3 bg-[#171717] border border-[#2e2e2e] rounded-md">
               <span className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider block">Total Prospectos</span>
               <p className="text-xl font-bold text-zinc-100 font-mono mt-0.5">{leads.length}</p>
@@ -869,6 +870,12 @@ export default function ServicesPanel({
               <span className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider block">Nuevos sin contactar</span>
               <p className="text-xl font-bold text-blue-400 font-mono mt-0.5">
                 {leads.filter(l => l.status === 'nuevo').length}
+              </p>
+            </div>
+            <div className="p-3 bg-[#171717] border border-[#2e2e2e] rounded-md">
+              <span className="text-[10px] text-zinc-400 font-medium uppercase tracking-wider block">Reuniones agendadas</span>
+              <p className="text-xl font-bold text-cyan-400 font-mono mt-0.5">
+                {leads.filter(l => l.status === 'reunion').length}
               </p>
             </div>
             <div className="p-3 bg-[#171717] border border-[#2e2e2e] rounded-md">
@@ -980,6 +987,9 @@ export default function ServicesPanel({
                                 <option key={k} value={k} className="bg-[#1a1a1a] text-zinc-200">{v.label}</option>
                               ))}
                             </select>
+                            {lead.meeting_at && (
+                              <div className="mt-1 text-[10px] text-cyan-300" title="Reunión">📅 {lead.meeting_at}</div>
+                            )}
                           </td>
                           <td className="py-2.5 px-3 text-right">
                             <div className="flex items-center justify-end gap-1">

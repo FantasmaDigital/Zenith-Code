@@ -31,6 +31,7 @@ TOOL_LABELS = {
     "cancelar_pedido": "Cancelar pedido",
     "guardar_lead": "Guardar Prospecto / CRM",
     "consultar_servicios": "Consultar Catálogo de Servicios",
+    "registrar_reunion": "Registrar Reunión / Demo",
 }
 
 

@@ -27,7 +27,8 @@ AGENTS: Dict[str, Dict[str, Any]] = {
         "role": ("Eres la recepción del negocio: saludas, das información general (horarios, ubicación, servicios) y "
                  "resuelves dudas con la base de conocimiento. Si el cliente quiere comprar, pedir o cotizar, usa "
                  "derivar_a_area con «ventas». Si tiene una queja o un problema con un pedido, usa derivar_a_area con «soporte»."),
-        "tools": ["guardar_dato_cliente", "transferir_a_asesor", "derivar_a_area", "consultar_pedido"],
+        "tools": ["guardar_dato_cliente", "transferir_a_asesor", "derivar_a_area", "consultar_pedido",
+                  "guardar_lead", "registrar_reunion", "consultar_servicios"],
         "keywords": [],
         "locked": True,  # siempre activa: es el punto de entrada
     },
@@ -37,7 +38,9 @@ AGENTS: Dict[str, Dict[str, Any]] = {
         "role": ("Eres el área de ventas: tu meta es ayudar al cliente a elegir y cerrar la compra o el pedido, con "
                  "trato cálido y de buen vendedor (sugiere un complemento, resuelve objeciones, facilita el siguiente "
                  "paso). Si el cliente tiene un reclamo, usa derivar_a_area con «soporte»."),
-        "tools": ["guardar_dato_cliente", "transferir_a_asesor", "derivar_a_area", "crear_pedido", "consultar_pedido"],
+        # Las herramientas de Servicios (CRM) solo existen si ese módulo está activo
+        "tools": ["guardar_dato_cliente", "transferir_a_asesor", "derivar_a_area", "crear_pedido", "consultar_pedido",
+                  "guardar_lead", "registrar_reunion", "consultar_servicios"],
         "keywords": ["quiero pedir", "quisiera pedir", "hacer un pedido", "quiero ordenar", "para llevar", "a domicilio",
                      "menu", "carta", "precio*", "cuanto cuesta", "cuanto vale", "cotiz*", "comprar", "quiero comprar",
                      "promocion", "combo", "me das", "me regalas", "agregame", "quiero un", "quiero una", "quiero dos"],

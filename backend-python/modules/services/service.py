@@ -9,6 +9,8 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("asistente_operativo.modules.services")
 
 _init_lock = threading.Lock()
+# Columnas que se agregaron después de la primera versión de la tabla (capture_lead_from_chat las usa)
+LEAD_EXTRA_COLUMNS = ("session_id", "conversation_text", "budget_text", "timeline_text", "meeting_at")
 CONFIG_KEY = "services_config"
 
 DEFAULT_CONFIG: Dict[str, Any] = {
@@ -193,6 +195,8 @@ class ProfessionalServicesService:
                             updated_at       TIMESTAMPTZ DEFAULT NOW()
                         )
                     """)
+                    for col in LEAD_EXTRA_COLUMNS:
+                        cur.execute(f"ALTER TABLE prof_leads ADD COLUMN IF NOT EXISTS {col} TEXT DEFAULT ''")
                     # Tabla de propuestas
                     cur.execute("""
                         CREATE TABLE IF NOT EXISTS prof_proposals (
@@ -247,6 +251,10 @@ class ProfessionalServicesService:
                         created_at TEXT, updated_at TEXT
                     )
                 """)
+                existing_cols = {r[1] for r in cur.execute("PRAGMA table_info(prof_leads)").fetchall()}
+                for col in LEAD_EXTRA_COLUMNS:
+                    if col not in existing_cols:
+                        cur.execute(f"ALTER TABLE prof_leads ADD COLUMN {col} TEXT DEFAULT ''")
                 cur.execute("""
                     CREATE TABLE IF NOT EXISTS prof_proposals (
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -580,6 +588,18 @@ class ProfessionalServicesService:
                 logger.info(f"✨ Nuevo Lead #{row['id']} ({name}) capturado automáticamente por IA en sesión {session_id}")
                 return row
 
+    def register_meeting(self, session_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
+        """El cliente confirmó una reunión: guarda/actualiza el lead y lo pasa a «reunion» con la fecha."""
+        lead = self.capture_lead_from_chat(session_id, args)
+        when = str(args.get("fecha_hora") or "").strip()[:120] or "Por confirmar (reserva por enlace)"
+        now = datetime.now(timezone.utc).isoformat()
+        with self._tx() as tx:
+            tx.execute("UPDATE prof_leads SET status = 'reunion', meeting_at = ?, updated_at = ? WHERE id = ?",
+                       (when, now, lead["id"]))
+            lead = tx.execute("SELECT * FROM prof_leads WHERE id = ?", (lead["id"],)).one()
+        logger.info(f"📅 Reunión registrada para el lead #{lead['id']} ({lead.get('name')}): {when}")
+        return lead
+
     def add_lead(self, data: Dict[str, Any]) -> Dict[str, Any]:
         now = datetime.now(timezone.utc).isoformat()
         with self._tx() as tx:
@@ -603,7 +623,7 @@ class ProfessionalServicesService:
     def update_lead(self, lead_id: int, data: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         now = datetime.now(timezone.utc).isoformat()
         fields, vals = [], []
-        allowed = ["name", "company", "email", "phone", "service_interest", "status", "source", "notes", "conversation_text", "budget_text", "timeline_text", "session_id"]
+        allowed = ["name", "company", "email", "phone", "service_interest", "status", "source", "notes", "conversation_text", "budget_text", "timeline_text", "session_id", "meeting_at"]
         for col in allowed:
             if col in data and data[col] is not None:
                 fields.append(f"{col} = ?")
