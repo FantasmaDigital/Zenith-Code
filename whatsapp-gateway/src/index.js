@@ -664,6 +664,10 @@ app.post('/api/chat/label', async (req, res) => {
 app.post('/api/logout', async (req, res) => {
   try {
     const s = getSessionForReq(req);
+    // Auditoría: desvincular borra las credenciales; dejar rastro de quién lo pidió
+    const origin = req.get('X-Internal-Key') ? 'backend (panel)' : 'página /qr (navegador)';
+    console.warn(`[WhatsAppGateway] 🔌 Desvinculación solicitada para [${s.tenantId}] desde ${origin} ` +
+      `(IP ${req.ip}, UA ${req.get('User-Agent') || 's/d'}).`);
     await s.logout();
     if (req.headers.accept?.includes('application/json') || req.is('json') || req.xhr) {
       return res.json({ success: true, status: 'DISCONNECTED' });
