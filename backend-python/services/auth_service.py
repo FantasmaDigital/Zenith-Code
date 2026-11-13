@@ -147,7 +147,17 @@ class AuthService:
 
         user = None
         ok = False
-        if username:
+        owner_tenants = tenant_registry.tenants_for_owner_email(username) if username else []
+        if tenant_given:
+            owner_tenants = [t for t in owner_tenants if t == tenant]
+        if owner_tenants:
+            # Correo del propietario guardado en la base: misma contraseña (con hash) de la empresa
+            tenant = owner_tenants[0]
+            ok = tenant_registry.verify_password(tenant, password)
+        elif not username and tenant_registry.owner_email(tenant):
+            # Esta empresa ya tiene correo de propietario: «admin» o contraseña sola ya no sirven
+            ok = False
+        elif username:
             if tenant_given:
                 found = user_service.authenticate(tenant, username, password)
                 matches = [{**found, "tenant": tenant}] if found else []

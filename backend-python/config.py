@@ -116,9 +116,18 @@ class Settings:
         self.SMTP_HOST: str = os_.getenv("SMTP_HOST", "").strip()
         self.SMTP_PORT: str = os_.getenv("SMTP_PORT", "").strip()
         self.SMTP_USER: str = os_.getenv("SMTP_USER", "").strip()
-        self.SMTP_PASSWORD: str = os_.getenv("SMTP_PASSWORD", "").strip()
-        self.SMTP_FROM: str = os_.getenv("SMTP_FROM", "").strip()
-        self.SMTP_SECURITY: str = os_.getenv("SMTP_SECURITY", "starttls").strip().lower()
+        # También se aceptan los nombres habituales SMTP_PASS y SMTP_SECURE=true (como en nodemailer)
+        self.SMTP_PASSWORD: str = (os_.getenv("SMTP_PASSWORD") or os_.getenv("SMTP_PASS") or "").strip()
+        # Sin SMTP_FROM se envía desde la cuenta autenticada (los proveedores rechazan otro remitente)
+        self.SMTP_FROM: str = (os_.getenv("SMTP_FROM") or self.SMTP_USER).strip()
+        secure = os_.getenv("SMTP_SECURE", "").strip().lower()
+        security = os_.getenv("SMTP_SECURITY", "").strip().lower()
+        if not security:
+            if secure in ("true", "1", "yes", "ssl") or self.SMTP_PORT == "465":
+                security = "ssl"
+            else:
+                security = "starttls"
+        self.SMTP_SECURITY: str = security
 
         if tenant != "default":
             # Una empresa nueva no hereda identidad ni credenciales de canal de otra empresa

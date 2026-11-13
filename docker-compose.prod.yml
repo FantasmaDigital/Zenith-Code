@@ -61,9 +61,10 @@ services:
       - SMTP_HOST=${SMTP_HOST:-}
       - SMTP_PORT=${SMTP_PORT:-}
       - SMTP_USER=${SMTP_USER:-}
-      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-${SMTP_PASS:-}}
       - SMTP_FROM=${SMTP_FROM:-}
-      - SMTP_SECURITY=${SMTP_SECURITY:-starttls}
+      - SMTP_SECURITY=${SMTP_SECURITY:-}
+      - SMTP_SECURE=${SMTP_SECURE:-}
       - PUBLIC_BASE_URL=https://${API_DOMAIN}
     volumes:
       - backend_data:/app/data

@@ -41,6 +41,7 @@ from services.meta_service import meta_service
 from services.db_service import db_service
 from modules.registry import module_registry
 from services.security_middleware import RateLimitMiddleware, SecurityHeadersMiddleware, rate_limiter
+from services.password_reset_service import password_reset_service, send_in_background
 
 # Configuración de logs
 logging.basicConfig(
@@ -262,6 +263,78 @@ def change_own_password(req: PasswordChange, authorization: Optional[str] = Head
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     return auth_service.issue_user_token(tenant, user_service.get_user(tenant, uid))
+
+class OwnerCredentials(BaseModel):
+    current_password: str = Field(..., min_length=1, max_length=256)
+    email: str = Field(..., min_length=3, max_length=160)
+    new_password: Optional[str] = Field(default=None, min_length=8, max_length=256)
+
+@router.get("/api/auth/owner")
+def get_owner_access(authorization: Optional[str] = Header(default=None)):
+    """Correo con el que entra el propietario de la empresa (solo lo ve el propietario)."""
+    claims = current_claims(authorization)
+    if not claims or claims.get("uid") is not None:
+        raise HTTPException(status_code=403, detail="Solo el propietario de la empresa.")
+    return {"email": tenant_registry.owner_email(str(claims["tenant"]))}
+
+@router.post("/api/auth/owner")
+def set_owner_access(req: OwnerCredentials, authorization: Optional[str] = Header(default=None)):
+    """El propietario fija su correo de acceso (y opcionalmente una contraseña nueva). Todo queda en la base,
+    la contraseña con hash. Desde ese momento «admin» deja de funcionar para esta empresa."""
+    claims = current_claims(authorization)
+    if not claims or claims.get("uid") is not None:
+        raise HTTPException(status_code=403, detail="Solo el propietario de la empresa.")
+    tenant = str(claims["tenant"])
+    if not tenant_registry.verify_password(tenant, req.current_password):
+        raise HTTPException(status_code=403, detail="La contraseña actual no es correcta.")
+    previous_email = tenant_registry.owner_email(tenant)
+    try:
+        tenant_registry.set_owner_credentials(tenant, req.email, req.new_password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    logger.info(f"🔐 Acceso del propietario de «{tenant}» actualizado.")
+    # Aviso de seguridad al correo nuevo y, si cambió, también al anterior
+    company = (tenant_registry.get(tenant) or {}).get("name") or tenant
+    new_email = tenant_registry.owner_email(tenant)
+    for to in {previous_email, new_email} - {""}:
+        send_in_background(to, f"Cambió el acceso de propietario de {company}",
+                           f"Hola,\n\nEl acceso de propietario de {company} en Zenith ahora usa el correo {new_email}"
+                           f"{' y una contraseña nueva' if req.new_password else ''}.\n\nSi no fuiste tú, "
+                           "recupera tu acceso desde «¿Olvidaste tu contraseña?» en la pantalla de inicio.\n")
+    return auth_service.issue_token(tenant)  # la contraseña pudo cambiar: el token anterior deja de valer
+
+# ==============================================================
+# RECUPERACIÓN DE CONTRASEÑA (RUTAS PÚBLICAS)
+# ==============================================================
+class ResetRequest(BaseModel):
+    email: str = Field(..., min_length=3, max_length=160)
+    tenant: str = Field(default="", max_length=40)
+
+class ResetConfirm(BaseModel):
+    token: str = Field(..., min_length=10, max_length=200)
+    password: str = Field(..., min_length=8, max_length=256)
+
+@app.post("/api/public/password-reset/request")
+def password_reset_request(req: ResetRequest):
+    """Siempre responde lo mismo: no revela si el correo tiene cuenta."""
+    try:
+        password_reset_service.request(req.email, req.tenant)
+    except Exception as e:
+        logger.warning(f"Error al generar enlace de recuperación: {e}")
+    return {"ok": True, "message": "Si el correo tiene una cuenta, te enviamos un enlace para restablecer la contraseña."}
+
+@app.get("/api/public/password-reset/{token}")
+def password_reset_check(token: str):
+    if not password_reset_service.check(token):
+        raise HTTPException(status_code=404, detail="El enlace no es válido o ya venció. Pide uno nuevo.")
+    return {"ok": True}
+
+@app.post("/api/public/password-reset/confirm")
+def password_reset_confirm(req: ResetConfirm):
+    try:
+        return password_reset_service.confirm(req.token, req.password)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 # ==============================================================
 # INVITACIONES (RUTAS PÚBLICAS: el enlace lleva un token aleatorio de un solo uso)
@@ -546,6 +619,7 @@ def read_root():
         "agent": settings.BOT_NAME,
         "company": settings.COMPANY_NAME,
         "company_name": settings.COMPANY_NAME,
+        "bot_name": settings.BOT_NAME,
         "company_logo": settings.COMPANY_LOGO,
         "bot_avatar": settings.BOT_AVATAR,
         "primary_color": settings.PRIMARY_COLOR,

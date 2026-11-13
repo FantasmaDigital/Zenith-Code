@@ -15,6 +15,11 @@ from typing import Deque, Dict, List, Tuple
 # (prefijo de ruta, peticiones permitidas, ventana en segundos). Gana el primer prefijo que coincida.
 DEFAULT_RULES: List[Tuple[str, int, int]] = [
     ("/api/auth/login", 20, 60),
+    # Endpoints que verifican la contraseña actual: sin esto se podrían probar contraseñas con un token robado
+    ("/api/auth/owner", 10, 60),
+    ("/api/auth/password", 10, 60),
+    # Recuperación de contraseña: pocos correos por IP para no usarla como cañón de spam
+    ("/api/public/password-reset/request", 5, 600),
     ("/api/public/", 120, 60),
     ("/webhook/meta", 600, 60),
 ]
@@ -24,7 +29,12 @@ _SECURITY_HEADERS = [
     (b"x-frame-options", b"DENY"),
     (b"referrer-policy", b"strict-origin-when-cross-origin"),
     (b"cross-origin-opener-policy", b"same-origin"),
-    (b"permissions-policy", b"camera=(), microphone=(), geolocation=()"),
+    (b"permissions-policy", b"camera=(), microphone=(), geolocation=(), payment=(), usb=(), "
+                            b"accelerometer=(), gyroscope=(), magnetometer=(), interest-cohort=()"),
+    # La API solo devuelve JSON/archivos: nada de scripts, ni ser incrustada en otra página
+    (b"content-security-policy", b"default-src 'none'; frame-ancestors 'none'; base-uri 'none'"),
+    (b"x-permitted-cross-domain-policies", b"none"),
+    (b"strict-transport-security", b"max-age=31536000; includeSubDomains"),
 ]
 
 

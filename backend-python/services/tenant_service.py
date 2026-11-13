@@ -24,7 +24,8 @@ from typing import Any, Dict, List, Optional
 logger = logging.getLogger("asistente_operativo.tenants")
 
 DEFAULT_TENANT = "default"
-RESERVED_SLUGS = {"default", "admin", "api", "root", "superadmin", "system", "public"}
+RESERVED_SLUGS = {"default", "admin", "api", "root", "superadmin", "system", "public",
+                  "auth", "privacidad", "cookies", "tenants", "empresas", "backend", "assets"}
 SLUG_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$")
 
 _current: contextvars.ContextVar = contextvars.ContextVar("zenith_tenant", default=DEFAULT_TENANT)
@@ -301,6 +302,11 @@ class TenantRegistry:
                 self._run("ALTER TABLE zenith_tenants ADD COLUMN features VARCHAR(200) DEFAULT 'arm'")
             except Exception:
                 pass  # la columna ya existe
+            try:
+                # Correo con el que entra el propietario (en la principal, el superadmin) en vez de «admin»
+                self._run("ALTER TABLE zenith_tenants ADD COLUMN owner_email VARCHAR(160) DEFAULT ''")
+            except Exception:
+                pass
             if not self._run("SELECT slug FROM zenith_tenants WHERE slug = ?", (DEFAULT_TENANT,), fetch=True):
                 from config import settings
                 name = settings.COMPANY_NAME or "Empresa principal"
@@ -314,6 +320,7 @@ class TenantRegistry:
         return {
             "slug": row["slug"], "name": row["name"], "active": bool(row["active"]),
             "has_own_password": bool(row.get("password_hash")),
+            "has_owner_email": bool(row.get("owner_email")),
             "meta_phone_number_id": row.get("meta_phone_number_id") or "",
             "created_at": row.get("created_at") or "",
             "features": TenantRegistry._features_of(row),
@@ -392,6 +399,35 @@ class TenantRegistry:
             from services.auth_service import auth_service
             return hmac.compare_digest((password or "").encode("utf-8"), auth_service.admin_password.encode("utf-8"))
         return False
+
+    def owner_email(self, slug: str) -> str:
+        return ((self._raw(normalize_slug(slug)) or {}).get("owner_email") or "").strip().lower()
+
+    def tenants_for_owner_email(self, email: str) -> List[str]:
+        """Empresas (activas) cuyo propietario entra con ese correo."""
+        email = (email or "").strip().lower()
+        if "@" not in email:
+            return []
+        rows = self._run("SELECT slug FROM zenith_tenants WHERE LOWER(owner_email) = ? AND active = 1",
+                         (email,), fetch=True)
+        return [r["slug"] for r in rows]
+
+    def set_owner_credentials(self, slug: str, email: str, password: Optional[str] = None) -> None:
+        """Guarda el correo del propietario y, si se indica, una contraseña nueva (siempre con hash, en la base)."""
+        slug = normalize_slug(slug)
+        email = (email or "").strip().lower()
+        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email) or len(email) > 160:
+            raise ValueError("Correo inválido.")
+        taken = [s for s in self.tenants_for_owner_email(email) if s != slug]
+        if taken:
+            raise ValueError("Ese correo ya es el acceso de otra empresa.")
+        if password is not None:
+            if len(password) < 8:
+                raise ValueError("La contraseña debe tener al menos 8 caracteres.")
+            self._run("UPDATE zenith_tenants SET password_hash = ? WHERE slug = ?", (hash_password(password), slug))
+        self._run("UPDATE zenith_tenants SET owner_email = ? WHERE slug = ?", (email, slug))
+        self._cache.pop(slug, None)
+        self._pv_cache.pop(slug, None)
 
     def password_version(self, slug: str) -> str:
         """

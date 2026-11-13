@@ -319,3 +319,81 @@ class TestTenantApi(TenantTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestOwnerEmailAccess(TenantTestCase):
+    def tearDown(self):
+        tenant_registry._run("UPDATE zenith_tenants SET owner_email = '' WHERE slug = 'globex'")
+        tenant_registry._cache.clear()
+
+    def test_owner_sets_email_and_admin_stops_working(self):
+        headers = self.login("globex", "clave-globex-123")
+        self.assertEqual(self.anon.get("/api/auth/owner", headers=headers).json()["email"], "")
+        bad = self.anon.post("/api/auth/owner", headers=headers,
+                             json={"email": "dueno@globex.dev", "current_password": "mala"})
+        self.assertEqual(bad.status_code, 403)
+        ok = self.anon.post("/api/auth/owner", headers=headers,
+                            json={"email": "Dueno@Globex.dev", "current_password": "clave-globex-123"})
+        self.assertEqual(ok.status_code, 200, ok.text)
+        # Con correo: entra (con o sin la empresa en la URL) y sigue siendo propietario
+        res = self.anon.post("/api/auth/login", json={"username": "dueno@globex.dev", "password": "clave-globex-123"})
+        self.assertEqual(res.status_code, 200, res.text)
+        self.assertEqual(res.json()["tenant"], "globex")
+        res = self.anon.post("/api/auth/login", json={"tenant": "globex", "username": "dueno@globex.dev",
+                                                         "password": "clave-globex-123"})
+        self.assertEqual(res.status_code, 200)
+        # «admin» y la contraseña sola ya no sirven para esa empresa
+        for username in ("admin", ""):
+            auth_service._failed_logins.clear()
+            res = self.anon.post("/api/auth/login", json={"tenant": "globex", "username": username,
+                                                             "password": "clave-globex-123"})
+            self.assertEqual(res.status_code, 401)
+        # El correo no abre otra empresa
+        res = self.anon.post("/api/auth/login", json={"tenant": "acme", "username": "dueno@globex.dev",
+                                                         "password": "clave-globex-123"})
+        self.assertEqual(res.status_code, 401)
+
+    def test_invited_user_cannot_change_owner_access(self):
+        res = self.anon.get("/api/auth/owner")
+        self.assertIn(res.status_code, (401, 403))
+
+
+class TestPasswordReset(TenantTestCase):
+    def setUp(self):
+        super().setUp()
+        from services.security_middleware import rate_limiter
+        rate_limiter.reset()
+        tenant_registry.set_owner_credentials("globex", "jefe@globex.dev")
+
+    def tearDown(self):
+        tenant_registry._run("UPDATE zenith_tenants SET owner_email = '' WHERE slug = 'globex'")
+        tenant_registry.update("globex", password="clave-globex-123")
+
+    def test_reset_owner_password_by_email(self):
+        from unittest.mock import patch
+        import services.password_reset_service as prs
+        sent = []
+        with patch.object(prs, "send_in_background", lambda to, subject, text: sent.append((to, text))):
+            res = self.anon.post("/api/public/password-reset/request", json={"email": "jefe@globex.dev"})
+            self.assertEqual(res.status_code, 200)
+            # Mismo mensaje para un correo que no existe (no revela cuentas)
+            other = self.anon.post("/api/public/password-reset/request", json={"email": "nadie@x.dev"})
+            self.assertEqual(other.json()["message"], res.json()["message"])
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0][0], "jefe@globex.dev")
+        token = sent[0][1].split("restablecer=")[1].split()[0]
+        self.assertEqual(self.anon.get(f"/api/public/password-reset/{token}").status_code, 200)
+
+        login = self.anon.post("/api/auth/login", json={"username": "jefe@globex.dev", "password": "clave-globex-123"})
+        old = {"Authorization": f"Bearer {login.json()['token']}"}
+        ok = self.anon.post("/api/public/password-reset/confirm", json={"token": token, "password": "nueva-clave-99"})
+        self.assertEqual(ok.status_code, 200, ok.text)
+        # El enlace es de un solo uso y las sesiones anteriores se cierran
+        again = self.anon.post("/api/public/password-reset/confirm", json={"token": token, "password": "otra-clave-99"})
+        self.assertEqual(again.status_code, 400)
+        self.assertEqual(self.anon.get("/api/auth/owner", headers=old).status_code, 401)
+        res = self.anon.post("/api/auth/login", json={"username": "jefe@globex.dev", "password": "nueva-clave-99"})
+        self.assertEqual(res.status_code, 200)
+
+    def test_bad_token_rejected(self):
+        self.assertEqual(self.anon.get("/api/public/password-reset/token-falso-123").status_code, 404)
