@@ -57,6 +57,39 @@ class MetaCloudService:
             return response.text[:300]
 
     # ---------------- Envío ----------------
+    def send_image_message(self, to_phone: str, image_base64: str, mime_type: str = "image/jpeg",
+                           caption: str = "") -> Dict[str, Any]:
+        """Sube la imagen a Meta y la envía al cliente (dentro de la ventana de 24 h)."""
+        import base64
+        if not self.is_configured():
+            return {"success": False, "error": "Meta Cloud API no está configurada."}
+        to = "".join(filter(str.isdigit, str(to_phone)))
+        try:
+            ext = mime_type.split("/")[-1]
+            up = requests.post(
+                f"{self._graph_url}/{settings.META_PHONE_NUMBER_ID}/media",
+                headers=self._headers(),
+                data={"messaging_product": "whatsapp", "type": mime_type},
+                files={"file": (f"imagen.{ext}", base64.b64decode(image_base64), mime_type)},
+                timeout=30,
+            )
+            if not up.ok:
+                return {"success": False, "error": self._graph_error(up)}
+            image = {"id": up.json().get("id")}
+            if caption:
+                image["caption"] = caption[:1000]
+            response = requests.post(
+                f"{self._graph_url}/{settings.META_PHONE_NUMBER_ID}/messages",
+                json={"messaging_product": "whatsapp", "recipient_type": "individual", "to": to,
+                      "type": "image", "image": image},
+                headers=self._headers(), timeout=15,
+            )
+            if response.ok:
+                return {"success": True}
+            return {"success": False, "error": self._graph_error(response)}
+        except requests.exceptions.RequestException as e:
+            return {"success": False, "error": f"No se pudo conectar con Meta: {type(e).__name__}"}
+
     def send_text_message(self, to_phone: str, message_text: str) -> Dict[str, Any]:
         """Envía texto libre. Fuera de la ventana de 24 h Meta lo rechaza (requiere plantilla)."""
         if not self.is_configured():

@@ -4,7 +4,7 @@ const config = require('./config');
 const session = require('./whatsapp/session');
 
 const app = express();
-app.use(express.json());
+app.use(express.json({ limit: '12mb' })); // imágenes enviadas desde la bandeja
 app.use(express.urlencoded({ extended: true }));
 
 if (!config.internalApiKey) {
@@ -635,6 +635,21 @@ app.post('/api/send', async (req, res) => {
   try {
     const s = getSessionForReq(req);
     const result = await s.sendMessage(to, text);
+    res.json({ success: true, result });
+  } catch (error) {
+    res.status(error.status || 500).json({ success: false, error: error.message });
+  }
+});
+
+// Envío de imagen (con texto opcional) desde la bandeja del panel
+app.post('/api/send-image', async (req, res) => {
+  const { to, imageBase64, mimeType, caption } = req.body || {};
+  if (!to || !imageBase64) {
+    return res.status(400).json({ error: "Los campos 'to' e 'imageBase64' son requeridos." });
+  }
+  try {
+    const s = getSessionForReq(req);
+    const result = await s.sendImage(to, Buffer.from(imageBase64, 'base64'), mimeType || 'image/jpeg', caption || '');
     res.json({ success: true, result });
   } catch (error) {
     res.status(error.status || 500).json({ success: false, error: error.message });

@@ -85,6 +85,28 @@ class WhatsAppGatewayService:
 
         return False
 
+    def send_image_message(self, to_phone: str, image_base64: str, mime_type: str = "image/jpeg", caption: str = "") -> bool:
+        """Envía una imagen (con texto opcional) por el canal activo."""
+        self.last_send_error = None
+        if self.channel == "meta":
+            result = meta_service.send_image_message(to_phone, image_base64, mime_type, caption)
+            self.last_send_error = result.get("error")
+            return bool(result.get("success"))
+        payload = {"to": to_phone, "imageBase64": image_base64, "mimeType": mime_type, "caption": caption or ""}
+        for base_url in self._candidate_urls():
+            try:
+                response = requests.post(f"{base_url}/api/send-image", json=payload, headers=self._auth_headers(), timeout=30)
+                if response.status_code in (200, 201):
+                    logger.info(f"Imagen enviada a +{to_phone} vía WhatsApp Gateway ({base_url}).")
+                    return True
+                body = (response.text or "").strip()[:300]
+                self.last_send_error = f"El gateway ({base_url}) respondió {response.status_code}: {body or 'sin detalle'}"
+                logger.error(self.last_send_error)
+            except requests.exceptions.RequestException as e:
+                self.last_send_error = f"No se pudo conectar con el gateway en {base_url}: {type(e).__name__}"
+                logger.error(f"Error al enviar imagen vía WhatsApp Gateway ({base_url}) a {to_phone}: {e}")
+        return False
+
     def add_chat_label(self, to_phone: str, tag: str, note: Optional[str] = None) -> bool:
         """
         Asigna una etiqueta nativa en WhatsApp Business al chat del cliente a través del Gateway de Baileys.

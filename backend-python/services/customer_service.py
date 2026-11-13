@@ -28,6 +28,7 @@ SUMMARY_FIRST_AFTER = 4         # primer resumen tras 4 mensajes
 SUMMARY_EVERY = 8               # luego, cada 8 mensajes nuevos
 SUMMARY_WINDOW = 40             # mensajes que el resumidor lee
 MAX_FACTS = 12
+MAX_AUDIO_B64 = 12 * 1024 * 1024  # ~9 MB de audio
 
 # Datos del NEGOCIO que cambian (horarios, precios, promociones, stock): nunca van a la memoria del cliente,
 # la IA los toma en vivo de la configuración. El presupuesto del cliente sí es un dato suyo y se conserva.
@@ -133,6 +134,10 @@ class CustomerService(TenantReadyMixin):
                 context_reset_at VARCHAR(40), first_seen_at VARCHAR(40), last_seen_at VARCHAR(40),
                 created_at VARCHAR(40), updated_at VARCHAR(40))""")
             run("CREATE INDEX IF NOT EXISTS idx_customers_last_seen ON customers(last_seen_at)")
+            # Notas de voz de los clientes (para escucharlas en la bandeja)
+            run("""CREATE TABLE IF NOT EXISTS conversation_media (
+                message_id INTEGER PRIMARY KEY, session_id VARCHAR(120) NOT NULL, mime VARCHAR(80) NOT NULL,
+                data TEXT NOT NULL, created_at VARCHAR(40) NOT NULL)""")
             cols = ({r["column_name"] for r in run.rows(run(
                 "SELECT column_name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'customers'"))}
                 if run.pg else {r["name"] for r in run.rows(run("PRAGMA table_info(customers)"))})
@@ -316,7 +321,51 @@ class CustomerService(TenantReadyMixin):
                 params.append(before_id)
             sql += " ORDER BY id DESC LIMIT ?"
             params.append(limit)
-            return list(reversed(run.rows(run(sql, tuple(params)))))
+            msgs = list(reversed(run.rows(run(sql, tuple(params)))))
+            ids = [m["id"] for m in msgs]
+            media = {}
+            if ids:
+                marks = ",".join("?" for _ in ids)
+                media = {r["message_id"]: r["mime"] for r in run.rows(run(
+                    f"SELECT message_id, mime FROM conversation_media WHERE message_id IN ({marks})", tuple(ids)))}
+            for m in msgs:
+                mime = media.get(m["id"]) or ""
+                m["media"] = "image" if mime.startswith("image/") else "audio" if mime.startswith("audio/") else None
+                m["has_audio"] = m["media"] == "audio"
+            return msgs
+
+    # ------------------------------------------------------------------
+    # NOTAS DE VOZ
+    # ------------------------------------------------------------------
+    def attach_audio(self, session_id: str, audio_base64: str, mime: Optional[str]) -> None:
+        self.attach_media(session_id, audio_base64, mime or "audio/ogg")
+
+    def attach_media(self, session_id: str, data_base64: str, mime: Optional[str], role: str = "user") -> None:
+        """Guarda la nota de voz o imagen junto al último mensaje de ese rol en esta conversación."""
+        if not data_base64 or len(data_base64) > MAX_AUDIO_B64:
+            return
+        self._ensure()
+        mime = (mime or "application/octet-stream").split(";")[0].strip()[:80]
+        if not (mime.startswith("audio/") or mime.startswith("image/")):
+            return
+        with self._conn() as run:
+            last = run.rows(run("SELECT id FROM conversation_messages WHERE session_id = ? AND role = ? "
+                                "ORDER BY id DESC LIMIT 1", (session_id, role)))
+            if not last:
+                return
+            mid = last[0]["id"]
+            if run.rows(run("SELECT message_id FROM conversation_media WHERE message_id = ?", (mid,))):
+                return
+            run("INSERT INTO conversation_media (message_id, session_id, mime, data, created_at) VALUES (?, ?, ?, ?, ?)",
+                (mid, session_id, mime, data_base64, _now()))
+
+    def get_audio(self, customer_id: int, message_id: int) -> Optional[Dict[str, Any]]:
+        self._ensure()
+        with self._conn() as run:
+            rows = run.rows(run(
+                "SELECT m.mime, m.data FROM conversation_media m JOIN customers c ON c.session_id = m.session_id "
+                "WHERE c.id = ? AND m.message_id = ?", (customer_id, message_id)))
+        return rows[0] if rows else None
 
     # ------------------------------------------------------------------
     # FICHAS

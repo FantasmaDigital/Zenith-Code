@@ -2277,7 +2277,7 @@ function Dashboard({ onLogout }) {
         </header>
 
         {/* Content Container */}
-        <main className="flex-1 w-full max-w-[1200px] mx-auto px-4 md:px-8 py-6 md:py-8">
+        <main className="flex-1 min-w-0 w-full max-w-[1200px] mx-auto px-4 md:px-8 py-6 md:py-8">
 
           {/* Banner de aviso cuando la empresa está desactivada */}
           {stats.tenant_active === false && (

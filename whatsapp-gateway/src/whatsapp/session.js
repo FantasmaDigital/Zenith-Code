@@ -490,6 +490,15 @@ class WhatsAppSession {
     return await this.sock.sendMessage(this._toJid(to), { text });
   }
 
+  async sendImage(to, buffer, mimetype = 'image/jpeg', caption = '') {
+    if (!this.sock || this.status !== 'CONNECTED') {
+      const err = new Error(`WhatsApp no está conectado para la empresa [${this.tenantId}] (Estado: ${this.status})`);
+      err.status = 503;
+      throw err;
+    }
+    return await this.sock.sendMessage(this._toJid(to), { image: buffer, mimetype, ...(caption ? { caption } : {}) });
+  }
+
   async addChatLabel(to, tagName, colorId = null) {
     if (!this.sock || this.status !== 'CONNECTED') return false;
     const jid = this._toJid(to);

@@ -967,6 +967,10 @@ def chat_direct(request: ChatRequest, caller: str = Depends(require_auth)):
         # La IA no responde, pero el mensaje sí queda en el historial del cliente
         incoming = user_text or ("🎙️ [Nota de voz]" if has_audio else "🖼️ [Imagen]")
         lead_service.add_message(request.session_id, "user", incoming)
+        if has_audio:
+            _keep_voice_note(request.session_id, request.audio_base64, request.audio_mime_type)
+        if has_image:
+            _keep_voice_note(request.session_id, request.image_base64, request.image_mime_type or "image/jpeg")
         logger.info(
             f"⏸️ [Agente Humano Activo] Mensaje de {request.session_id} omitido por la IA. "
             f"Conversación en manos humanas (Inactividad restante: {remaining_hours:.1f}h). Silencio absoluto sin mensajes al cliente."
@@ -986,6 +990,10 @@ def chat_direct(request: ChatRequest, caller: str = Depends(require_auth)):
         image_base64=request.image_base64,
         image_mime_type=request.image_mime_type
     )
+    if has_audio:
+        _keep_voice_note(request.session_id, request.audio_base64, request.audio_mime_type)
+    if has_image:
+        _keep_voice_note(request.session_id, request.image_base64, request.image_mime_type or "image/jpeg")
 
     is_transferred = lead_service.is_transferred(request.session_id)
 
@@ -994,6 +1002,14 @@ def chat_direct(request: ChatRequest, caller: str = Depends(require_auth)):
         reply=reply,
         transferred_to_human=is_transferred
     )
+
+def _keep_voice_note(session_id: str, audio_b64: Optional[str], mime: Optional[str]) -> None:
+    """Guarda la nota de voz o imagen del cliente para verla en la bandeja (nunca bloquea la respuesta)."""
+    try:
+        customer_service.attach_media(session_id, audio_b64, mime)
+    except Exception as e:
+        logger.warning(f"No se pudo guardar la nota de voz de {session_id}: {e}")
+
 
 # ==============================================================
 # WEBHOOK PARA MENSAJES ENTRANTES DESDE WHATSAPP GATEWAY
@@ -1126,6 +1142,10 @@ def _process_meta_message(message: dict):
         image_base64=image_b64,
         image_mime_type=message["image_mime_type"] or "image/jpeg"
     )
+    if audio_b64:
+        _keep_voice_note(from_number, audio_b64, message["audio_mime_type"])
+    if image_b64:
+        _keep_voice_note(from_number, image_b64, message["image_mime_type"] or "image/jpeg")
     if reply and reply.strip():
         meta_service.send_text_message(from_number, reply)
 
@@ -1313,6 +1333,21 @@ def customer_messages(customer_id: int, before_id: Optional[int] = None, limit: 
     return {"messages": customer_service.list_messages(customer_id, before_id=before_id, limit=limit)}
 
 
+@arm_router.get("/api/customers/{customer_id}/messages/{message_id}/media")
+def customer_message_media(customer_id: int, message_id: int):
+    """Nota de voz o imagen de un mensaje, para verla en la bandeja."""
+    import base64
+    from fastapi.responses import Response
+    media = customer_service.get_audio(customer_id, message_id)
+    if not media:
+        raise HTTPException(status_code=404, detail="Archivo no encontrado.")
+    try:
+        data = base64.b64decode(media["data"])
+    except Exception:
+        raise HTTPException(status_code=410, detail="Archivo dañado.")
+    return Response(content=data, media_type=media["mime"], headers={"Cache-Control": "private, max-age=3600"})
+
+
 class AgentReply(BaseModel):
     text: str = Field(..., min_length=1, max_length=4000)
     actor: Optional[str] = Field("Asesor", max_length=100)
@@ -1346,6 +1381,39 @@ def reply_to_customer(customer_id: int, data: AgentReply):
         lead_service.pause_handoff(sid, reason=f"Atendido por {data.actor or 'un asesor'} desde la bandeja",
                                    tag="ATENCIÓN HUMANA", notes="Respondido desde la bandeja del panel.")
     lead_service.add_message(sid, "human", data.text.strip())
+    return {"status": "sent", "human": lead_service.is_transferred(sid)}
+
+
+class AgentImage(BaseModel):
+    image_base64: str = Field(..., min_length=10, max_length=7_000_000)  # ~5 MB
+    mime_type: str = Field("image/jpeg", pattern="^image/(jpeg|png|webp)$")
+    caption: Optional[str] = Field("", max_length=1000)
+    actor: Optional[str] = Field("Asesor", max_length=100)
+    take_over: bool = True
+
+
+@arm_router.post("/api/customers/{customer_id}/reply-image")
+def reply_image_to_customer(customer_id: int, data: AgentImage):
+    """Un asesor envía una imagen (con texto opcional) desde la bandeja."""
+    import base64
+    customer = customer_service.get(customer_id)
+    if not customer:
+        raise HTTPException(status_code=404, detail="Cliente no encontrado.")
+    sid = customer["session_id"]
+    if customer.get("channel") != "whatsapp":
+        raise HTTPException(status_code=400, detail="Este chat no es de WhatsApp: la imagen no se puede entregar al cliente.")
+    try:
+        base64.b64decode(data.image_base64, validate=True)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Imagen inválida.")
+    caption = (data.caption or "").strip()
+    if not whatsapp_service.send_image_message(sid, data.image_base64, data.mime_type, caption):
+        raise HTTPException(status_code=424, detail=whatsapp_service.last_send_error or "No se pudo enviar la imagen por WhatsApp.")
+    if data.take_over and not lead_service.is_transferred(sid):
+        lead_service.pause_handoff(sid, reason=f"Atendido por {data.actor or 'un asesor'} desde la bandeja",
+                                   tag="ATENCIÓN HUMANA", notes="Respondido desde la bandeja del panel.")
+    lead_service.add_message(sid, "human", caption or "🖼️ [Imagen]")
+    customer_service.attach_media(sid, data.image_base64, data.mime_type, role="human")
     return {"status": "sent", "human": lead_service.is_transferred(sid)}
 
 

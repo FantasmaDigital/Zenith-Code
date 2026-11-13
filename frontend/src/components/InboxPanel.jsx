@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { ArrowLeft, Bot, Hand, Search, Send, UserRound, Undo2 } from 'lucide-react';
+import { ArrowLeft, Bot, Hand, Image as ImageIcon, Play, Search, Send, UserRound, Undo2, X } from 'lucide-react';
 import { Avatar } from './CustomersPanel';
 
 const POLL_MS = 5000;
@@ -81,12 +81,71 @@ function ConversationList({ api, selectedId, onSelect }) {
   );
 }
 
+/** Nota de voz del cliente: se descarga con la sesión del panel y se reproduce en un <audio>. */
+function VoiceNote({ api, customerId, messageId }) {
+  const [src, setSrc] = useState(null);
+  const [state, setState] = useState('idle'); // idle | loading | error
+  useEffect(() => () => { if (src) URL.revokeObjectURL(src); }, [src]);
+  const load = async () => {
+    setState('loading');
+    try {
+      const res = await api(`/api/customers/${customerId}/messages/${messageId}/media`);
+      if (!res.ok) throw new Error();
+      setSrc(URL.createObjectURL(await res.blob()));
+      setState('idle');
+    } catch {
+      setState('error');
+    }
+  };
+  if (src) return <audio controls autoPlay src={src} className="block w-full max-w-[260px] h-9 my-1" />;
+  return (
+    <button type="button" onClick={load} disabled={state === 'loading'}
+      className="flex items-center gap-1.5 my-1 px-2.5 py-1.5 rounded-md bg-black/20 text-[12px] text-zinc-200 hover:bg-black/30 disabled:opacity-60">
+      <Play size={12} /> {state === 'loading' ? 'Cargando audio…' : state === 'error' ? 'No se pudo cargar · reintentar' : 'Escuchar nota de voz'}
+    </button>
+  );
+}
+
+/** Imagen del chat: se descarga con la sesión del panel; clic para verla completa. */
+function ChatImage({ api, customerId, messageId }) {
+  const [src, setSrc] = useState(null);
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    let url = null, alive = true;
+    api(`/api/customers/${customerId}/messages/${messageId}/media`)
+      .then(res => { if (!res.ok) throw new Error(); return res.blob(); })
+      .then(b => { url = URL.createObjectURL(b); if (alive) setSrc(url); })
+      .catch(() => alive && setError(true));
+    return () => { alive = false; if (url) URL.revokeObjectURL(url); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerId, messageId]);
+  if (error) return <span className="flex items-center gap-1.5 my-1 text-[12px] text-zinc-400"><ImageIcon size={12} /> Imagen no disponible</span>;
+  if (!src) return <div className="my-1 w-48 h-32 max-w-full rounded-md bg-black/20 animate-pulse" />;
+  return (
+    <a href={src} target="_blank" rel="noreferrer" className="block my-1">
+      <img src={src} alt="Imagen del chat" className="block max-w-full sm:max-w-[260px] max-h-72 rounded-md object-contain bg-black/20" />
+    </a>
+  );
+}
+
+const fileToBase64 = (file) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result).split(',')[1]);
+  r.onerror = reject;
+  r.readAsDataURL(file);
+});
+const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+// Texto que el backend guarda cuando el mensaje es solo audio o imagen: con el archivo visible sobra
+const MEDIA_PLACEHOLDERS = ['🎙️ [Nota de voz]', '🖼️ [Imagen]'];
+
 function Conversation({ api, customerId, toast, themeColor, onOpenCustomer, onBack }) {
   const [customer, setCustomer] = useState(null);
   const [messages, setMessages] = useState([]);
   const [human, setHuman] = useState(false);
   const [text, setText] = useState('');
   const [sending, setSending] = useState(false);
+  const [image, setImage] = useState(null); // { file, preview } adjunta para enviar
+  const fileRef = useRef(null);
   const scrollRef = useRef(null);
   const lastIdRef = useRef(null);
 
@@ -120,17 +179,34 @@ function Conversation({ api, customerId, toast, themeColor, onOpenCustomer, onBa
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [customerId]);
 
+  const pickImage = (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!/^image\/(jpeg|png|webp)$/.test(file.type)) return toast('Solo imágenes JPG, PNG o WEBP.', true);
+    if (file.size > MAX_IMAGE_BYTES) return toast('La imagen pesa más de 5 MB.', true);
+    if (image) URL.revokeObjectURL(image.preview);
+    setImage({ file, preview: URL.createObjectURL(file) });
+  };
+  const clearImage = () => { if (image) URL.revokeObjectURL(image.preview); setImage(null); };
+
   const send = async (e) => {
     e.preventDefault();
-    if (!text.trim()) return;
+    if (!text.trim() && !image) return;
     setSending(true);
     try {
-      const res = await api(`/api/customers/${customerId}/reply`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text.trim() })
-      });
+      const res = image
+        ? await api(`/api/customers/${customerId}/reply-image`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_base64: await fileToBase64(image.file), mime_type: image.file.type, caption: text.trim() })
+        })
+        : await api(`/api/customers/${customerId}/reply`, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: text.trim() })
+        });
       if (!res.ok) throw new Error(await errorText(res, 'No se pudo enviar.'));
       setHuman((await res.json()).human);
       setText('');
+      clearImage();
       load(false);
     } catch (err) {
       toast(err.message, true);
@@ -150,7 +226,7 @@ function Conversation({ api, customerId, toast, themeColor, onOpenCustomer, onBa
   };
 
   return (
-    <div className="flex flex-col min-h-0">
+    <div className="flex flex-col min-h-0 min-w-0">
       <div className="px-3 md:px-4 py-2.5 border-b border-[#2e2e2e] flex items-center justify-between gap-2 md:gap-3">
         <button onClick={onBack} className="md:hidden p-2 -ml-1 text-zinc-400 hover:text-white shrink-0" aria-label="Volver a la lista">
           <ArrowLeft size={18} />
@@ -166,7 +242,7 @@ function Conversation({ api, customerId, toast, themeColor, onOpenCustomer, onBa
         </button>
       </div>
 
-      <div ref={scrollRef} className="flex-1 overflow-y-auto p-4 space-y-2">
+      <div ref={scrollRef} className="flex-1 overflow-y-auto overflow-x-hidden p-3 md:p-4 space-y-2">
         {messages.map(m => {
           if (m.role === 'action') {
             return (
@@ -178,14 +254,16 @@ function Conversation({ api, customerId, toast, themeColor, onOpenCustomer, onBa
           const mine = m.role !== 'user';
           return (
             <div key={m.id} className={`flex ${mine ? 'justify-end' : 'justify-start'}`}>
-              <div className={`max-w-[78%] rounded-lg px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap ${mine ? 'rounded-br-sm text-zinc-100' : 'rounded-bl-sm bg-[#232323] text-zinc-200'}`}
+              <div className={`max-w-[88%] sm:max-w-[78%] min-w-0 rounded-lg px-3 py-2 text-[13px] leading-relaxed whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${mine ? 'rounded-br-sm text-zinc-100' : 'rounded-bl-sm bg-[#232323] text-zinc-200'}`}
                 style={mine ? { backgroundColor: m.role === 'human' ? 'rgba(245, 158, 11, 0.16)' : 'rgba(var(--theme-primary-rgb), 0.16)' } : undefined}>
                 {mine && (
                   <span className="flex items-center gap-1 text-[10px] text-zinc-400 mb-0.5">
                     {m.role === 'human' ? <><UserRound size={10} /> Asesor</> : <><Bot size={10} /> IA</>}
                   </span>
                 )}
-                {m.content}
+                {m.media === 'audio' && <VoiceNote api={api} customerId={customerId} messageId={m.id} />}
+                {m.media === 'image' && <ChatImage api={api} customerId={customerId} messageId={m.id} />}
+                {m.media && MEDIA_PLACEHOLDERS.includes((m.content || '').trim()) ? null : m.content}
                 <span className="block mt-1 text-[10px] text-zinc-500 text-right">{shortTime(m.created_at)}</span>
               </div>
             </div>
@@ -195,16 +273,26 @@ function Conversation({ api, customerId, toast, themeColor, onOpenCustomer, onBa
 
       <form onSubmit={send} className="p-3 border-t border-[#2e2e2e] space-y-1.5">
         {!human && <p className="text-[11px] text-zinc-500">Al responder tomas el control: la IA deja de contestar en este chat hasta que la devuelvas.</p>}
+        {image && (
+          <div className="relative inline-block">
+            <img src={image.preview} alt="Imagen a enviar" className="h-20 max-w-[160px] rounded-md object-cover border border-[#2e2e2e]" />
+            <button type="button" onClick={clearImage} className="absolute -top-2 -right-2 p-1 rounded-full bg-[#2a2a2a] text-zinc-300 hover:text-white" aria-label="Quitar imagen"><X size={12} /></button>
+          </div>
+        )}
         <div className="flex gap-2">
+          <input ref={fileRef} type="file" accept="image/jpeg,image/png,image/webp" className="hidden" onChange={pickImage} />
+          <button type="button" onClick={() => fileRef.current?.click()} className="px-2.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-[#232323] shrink-0" aria-label="Adjuntar imagen" title="Adjuntar imagen">
+            <ImageIcon size={16} />
+          </button>
           <textarea
             rows={1}
             value={text}
             onChange={e => setText(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(e); } }}
-            placeholder="Escribe una respuesta… (Enter para enviar)"
+            placeholder={image ? 'Texto de la imagen (opcional)…' : 'Escribe una respuesta… (Enter para enviar)'}
             className={`${inputClass} resize-none`}
           />
-          <button type="submit" disabled={sending || !text.trim()} className="px-3 rounded-md text-black disabled:opacity-40" style={{ backgroundColor: themeColor }} aria-label="Enviar">
+          <button type="submit" disabled={sending || (!text.trim() && !image)} className="px-3 rounded-md text-black disabled:opacity-40" style={{ backgroundColor: themeColor }} aria-label="Enviar">
             <Send size={15} />
           </button>
         </div>
@@ -222,7 +310,7 @@ export default function InboxPanel({ apiFetch, apiBase, themeColor, showToast, c
         <h1 className="text-xl font-medium tracking-tight text-zinc-100">Bandeja</h1>
         <p className="text-sm text-zinc-400 mt-1">Todas las conversaciones en vivo, con lo que hizo el agente. Toma el control cuando quieras.</p>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-[300px_1fr] h-[calc(100dvh-180px)] md:h-[calc(100vh-200px)] min-h-[420px] md:min-h-[480px] bg-[#171717] border border-[#2e2e2e] rounded-md overflow-hidden">
+      <div className="grid grid-cols-1 md:grid-cols-[minmax(240px,300px)_minmax(0,1fr)] h-[calc(100dvh-180px)] md:h-[calc(100vh-200px)] min-h-[420px] md:min-h-[480px] bg-[#171717] border border-[#2e2e2e] rounded-md overflow-hidden">
         {/* En el móvil se ve una cosa a la vez: la lista o el chat abierto (con botón para volver) */}
         <div className={`${conversationId ? 'hidden md:flex' : 'flex'} flex-col min-h-0 [&>div]:flex-1`}>
           <ConversationList api={api} selectedId={conversationId} onSelect={onSelect} />
