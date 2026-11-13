@@ -47,6 +47,9 @@ def _channel_for(session_id: str) -> str:
     return "web"
 
 
+PLAYGROUND_PATTERN = "%playground-session"  # IDs del chat de prueba del panel (p. ej. «react-playground-session»)
+
+
 def _phone_for(session_id: str) -> Optional[str]:
     """Teléfono real solo si el ID es un número (los IDs «@lid» no revelan el número)."""
     return session_id if re.fullmatch(r"\d{8,15}", session_id or "") else None
@@ -121,6 +124,8 @@ class CustomerService(TenantReadyMixin):
             for col in ("current_agent", "current_agent_at"):
                 if col not in cols:
                     run(f"ALTER TABLE customers ADD COLUMN {col} VARCHAR(40)")  # área que atiende el chat
+            if "avatar_url" not in cols:
+                run("ALTER TABLE customers ADD COLUMN avatar_url TEXT")  # foto de perfil de WhatsApp
             # Chats de WhatsApp con ID «@lid» que se guardaron como «web» antes de reconocerlos
             run("UPDATE customers SET channel = 'whatsapp' WHERE channel = 'web' AND session_id LIKE ?", ("%@lid",))
         self._ready = True
@@ -167,6 +172,15 @@ class CustomerService(TenantReadyMixin):
                     ((now, now, session_id) if role == "user" else (now, session_id)))
                 if contact_name and not exists[0].get("name"):
                     run("UPDATE customers SET name = ? WHERE session_id = ?", (contact_name.strip()[:120], session_id))
+
+    def set_avatar(self, session_id: str, url: Optional[str]) -> None:
+        """Guarda (o borra, si llega vacía) la URL de la foto de perfil de WhatsApp."""
+        self._ensure()
+        url = (url or "").strip() or None
+        if url and not url.startswith("https://"):
+            return
+        with self._conn() as run:
+            run("UPDATE customers SET avatar_url = ? WHERE session_id = ?", (url, session_id))
 
     def note_contact(self, session_id: str, name: str) -> None:
         """Registra el nombre de perfil (WhatsApp) si la ficha aún no tiene nombre. Crea la ficha si no existe."""
@@ -307,7 +321,8 @@ class CustomerService(TenantReadyMixin):
 
     def list(self, search: str = "", stage: str = "", tag: str = "", limit: int = 50, offset: int = 0) -> Dict[str, Any]:
         self._ensure()
-        where, params = ["1=1"], []
+        # El chat de prueba del panel no es un cliente real: no sale en la bandeja ni en Clientes
+        where, params = ["session_id NOT LIKE ?"], [PLAYGROUND_PATTERN]
         if search:
             like = f"%{search.strip().lower()}%"
             where.append("(LOWER(COALESCE(name,'')) LIKE ? OR LOWER(COALESCE(phone,'')) LIKE ? OR LOWER(session_id) LIKE ? "
@@ -325,7 +340,8 @@ class CustomerService(TenantReadyMixin):
             rows = run.rows(run(
                 f"SELECT * FROM customers WHERE {sql_where} ORDER BY last_seen_at DESC LIMIT ? OFFSET ?",
                 tuple(params + [limit, offset])))
-            counts = run.rows(run("SELECT stage, COUNT(*) AS n FROM customers GROUP BY stage"))
+            counts = run.rows(run("SELECT stage, COUNT(*) AS n FROM customers WHERE session_id NOT LIKE ? GROUP BY stage",
+                                  (PLAYGROUND_PATTERN,)))
         return {
             "customers": [self._decode(r) for r in rows],
             "total": int(total),
@@ -351,7 +367,7 @@ class CustomerService(TenantReadyMixin):
                 if only == "human" and not human:
                     continue
                 out.append({"id": c["id"], "session_id": c["session_id"], "name": c.get("name"), "phone": c.get("phone"), "channel": c.get("channel"),
-                            "stage": c["stage"], "stage_label": c["stage_label"], "tags": c.get("tags") or [],
+                            "avatar_url": c.get("avatar_url"), "stage": c["stage"], "stage_label": c["stage_label"], "tags": c.get("tags") or [],
                             "human": human, "last_role": last[0]["role"], "last_message": last[0]["content"][:160],
                             "last_at": last[0]["created_at"]})
         out.sort(key=lambda x: x["last_at"] or "", reverse=True)

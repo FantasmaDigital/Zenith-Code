@@ -9,6 +9,7 @@ class ChatRequest(BaseModel):
     image_base64: Optional[str] = Field(default=None, description="Imagen o captura de comprobante bancario en base64")
     image_mime_type: Optional[str] = Field(default="image/jpeg", description="Tipo MIME de la imagen")
     contact_name: Optional[str] = Field(default=None, max_length=120, description="Nombre de perfil del cliente en WhatsApp")
+    contact_avatar: Optional[str] = Field(default=None, max_length=1000, description="URL de la foto de perfil de WhatsApp")
 
     @property
     def has_content(self) -> bool:

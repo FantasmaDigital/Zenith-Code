@@ -361,6 +361,21 @@ class WhatsAppSession {
     return jid.split('@')[0].split(':')[0];
   }
 
+  /** URL de la foto de perfil (si la privacidad del contacto lo permite). Se cachea 12 h por chat. */
+  async _profilePicture(jid) {
+    this._avatarCache = this._avatarCache || new Map();
+    const hit = this._avatarCache.get(jid);
+    if (hit && Date.now() - hit.at < 12 * 3600 * 1000) return hit.url;
+    let url = null;
+    try {
+      url = (await this.sock?.profilePictureUrl(jid, 'image')) || null;
+    } catch (_) {
+      url = null; // sin foto o foto privada
+    }
+    this._avatarCache.set(jid, { url, at: Date.now() });
+    return url;
+  }
+
   async _processMessage(msg) {
     const remoteJid = msg.key.remoteJid;
     const senderPhone = this._senderId(msg);
@@ -384,7 +399,7 @@ class WhatsAppSession {
     const aiResponse = await forwardToPythonBackend(
       senderPhone,
       text,
-      { ...mediaPayload, contactName: msg.pushName || null },
+      { ...mediaPayload, contactName: msg.pushName || null, contactAvatar: await this._profilePicture(remoteJid) },
       this.tenantId
     );
 

@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Bot, Hand, Search, Send, UserRound, Undo2 } from 'lucide-react';
+import { Avatar } from './CustomersPanel';
 
 const POLL_MS = 5000;
 const inputClass = 'w-full bg-[#121212] border border-[#2e2e2e] rounded-md px-3 py-2 text-[13px] text-zinc-100 outline-none focus:border-zinc-500';
@@ -57,9 +58,7 @@ function ConversationList({ api, selectedId, onSelect }) {
           <li key={c.id}>
             <button onClick={() => onSelect(c.id)}
               className={`w-full text-left px-3 py-2.5 flex gap-2.5 hover:bg-[#1c1c1c] ${String(selectedId) === String(c.id) ? 'bg-[#232323]' : ''}`}>
-              <div className="w-8 h-8 rounded-full bg-[#2a2a2a] border border-[#3a3a3a] flex items-center justify-center text-[12px] text-zinc-200 shrink-0">
-                {(c.name || '?').charAt(0).toUpperCase()}
-              </div>
+              <Avatar name={c.name} src={c.avatar_url} size="w-8 h-8 text-[12px]" />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center justify-between gap-2">
                   <span className="text-[13px] text-zinc-100 truncate">{c.name || phoneLabel(c.phone, c.channel)}</span>

@@ -26,7 +26,8 @@ async function forwardToPythonBackend(senderNumber, userMessage, media = {}, ten
     audio_mime_type: media.audioMimeType || 'audio/ogg; codecs=opus',
     image_base64: media.imageBase64 || null,
     image_mime_type: media.imageMimeType || 'image/jpeg',
-    contact_name: media.contactName || null
+    contact_name: media.contactName || null,
+    contact_avatar: media.contactAvatar || null
   };
 
   const resolvedTenant = (tenantId || config.tenantId || 'default').trim().toLowerCase();

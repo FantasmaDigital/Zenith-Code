@@ -37,8 +37,14 @@ function StageBadge({ stage }) {
   );
 }
 
-function Avatar({ name, size = 'w-8 h-8 text-[13px]' }) {
+export function Avatar({ name, src, size = 'w-8 h-8 text-[13px]' }) {
+  const [broken, setBroken] = React.useState(false);
   const initial = (name || '?').trim().charAt(0).toUpperCase();
+  if (src && !broken) {
+    // Las URLs de WhatsApp caducan: si ya no carga, se vuelve a la inicial
+    return <img src={src} alt="" referrerPolicy="no-referrer" onError={() => setBroken(true)}
+      className={`${size} rounded-full object-cover border border-[#3a3a3a] shrink-0`} />;
+  }
   return <div className={`${size} rounded-full bg-[#2a2a2a] border border-[#3a3a3a] flex items-center justify-center font-medium text-zinc-200 shrink-0`}>{initial}</div>;
 }
 
@@ -121,7 +127,7 @@ function CustomerList({ apiFetch, apiBase, onOpen }) {
               <tr key={c.id} onClick={() => onOpen(c.id)} className="hover:bg-[#1c1c1c] cursor-pointer">
                 <td className="px-4 py-2.5">
                   <div className="flex items-center gap-2.5">
-                    <Avatar name={c.name || c.phone} />
+                    <Avatar name={c.name || c.phone} src={c.avatar_url} />
                     <div className="min-w-0">
                       <p className="text-zinc-100 truncate">{c.name || 'Sin nombre'}</p>
                       <p className="text-[12px] text-zinc-500 truncate">{phoneLabel(c.phone, c.channel) || 'Chat web'}</p>
@@ -279,7 +285,7 @@ function CustomerDetail({ apiFetch, apiBase, customerId, onBack, toast, themeCol
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <button onClick={onBack} className="p-1.5 rounded-md text-zinc-400 hover:text-zinc-100 hover:bg-[#232323]" aria-label="Volver a clientes"><ArrowLeft size={16} /></button>
-          <Avatar name={c.name || c.phone} size="w-10 h-10 text-base" />
+          <Avatar name={c.name || c.phone} src={c.avatar_url} size="w-10 h-10 text-base" />
           <div>
             <h1 className="text-xl font-medium tracking-tight text-zinc-100">{c.name || 'Sin nombre'}</h1>
             <p className="text-[13px] text-zinc-400 flex items-center gap-1.5">
