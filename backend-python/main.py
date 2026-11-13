@@ -35,13 +35,15 @@ from services.user_service import (
     invite_link, normalize_email, normalize_phone,
 )
 from services.tenant_service import (
-    DEFAULT_TENANT, FEATURE_ARM, current_tenant, normalize_slug, public_slug, default_public_slug, require_feature, tenant_context, tenant_registry,
+    DEFAULT_TENANT, FEATURE_ARM, current_tenant, normalize_slug, public_slug, default_public_slug, require_feature, tenant_context, tenant_registry, validate_slug,
 )
 from services.meta_service import meta_service
 from services.db_service import db_service
 from modules.registry import module_registry
 from services.security_middleware import RateLimitMiddleware, SecurityHeadersMiddleware, rate_limiter
 from services.password_reset_service import password_reset_service, send_in_background
+from services.billing_service import PayPalError, billing_service
+from starlette.concurrency import run_in_threadpool
 
 # Configuración de logs
 logging.basicConfig(
@@ -170,6 +172,7 @@ def startup_event():
                 logger.warning(f"[{slug}] No se pudo indexar el número de Meta: {e}")
     try:
         automation_service.start()  # un solo hilo que recorre todas las empresas activas
+        billing_service.start()  # pausa empresas cuya suscripción cancelada ya venció
     except Exception as e:
         logger.error(f"No se pudo iniciar el agente proactivo: {e}")
     try:
@@ -335,6 +338,86 @@ def password_reset_confirm(req: ResetConfirm):
         return password_reset_service.confirm(req.token, req.password)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+# ==============================================================
+# COBRO CON PAYPAL (suscripciones)
+# ==============================================================
+class BillingActivate(BaseModel):
+    subscription_id: str = Field(..., min_length=5, max_length=60)
+    company: str = Field(..., min_length=2, max_length=160)
+    slug: str = Field(..., min_length=2, max_length=40)
+    email: str = Field(..., min_length=5, max_length=160)
+
+@app.get("/api/public/billing/config")
+def billing_config():
+    """Planes y precios para la página de ventas (sin secretos: solo el client_id público de PayPal)."""
+    return billing_service.public_config()
+
+@app.get("/api/public/billing/slug")
+def billing_slug_available(slug: str = Query("", max_length=40)):
+    """Comprueba el identificador ANTES de pagar, para no cobrar una suscripción que luego no se pueda crear."""
+    try:
+        clean = validate_slug(slug)
+    except ValueError as e:
+        return {"available": False, "detail": str(e)}
+    taken = bool(tenant_registry.get(clean))
+    return {"available": not taken, "slug": clean,
+            "detail": "Ese identificador ya está en uso." if taken else ""}
+
+@app.post("/api/public/billing/activate")
+def billing_activate(req: BillingActivate):
+    try:
+        return billing_service.activate(req.subscription_id, req.company, req.slug, req.email)
+    except (ValueError, PayPalError) as e:
+        logger.warning(f"Alta con PayPal rechazada: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+
+@app.post("/webhook/paypal")
+async def paypal_webhook(request: Request):
+    """Eventos de PayPal. Solo se procesan si PayPal confirma la firma."""
+    try:
+        event = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="JSON inválido.")
+    headers = {k.lower(): v for k, v in request.headers.items()}
+    if not await run_in_threadpool(billing_service.verify_webhook, headers, event):
+        raise HTTPException(status_code=400, detail="Firma inválida.")
+    try:
+        await run_in_threadpool(billing_service.handle_event, event)
+    except Exception as e:
+        logger.exception(f"Error procesando el evento de PayPal: {e}")
+    return {"ok": True}
+
+@router.get("/api/billing/me")
+def billing_me(authorization: Optional[str] = Header(default=None)):
+    claims = current_claims(authorization)
+    tenant = str((claims or {}).get("tenant") or DEFAULT_TENANT)
+    sub = billing_service.subscription_for_tenant(tenant)
+    if not sub:
+        return {"subscription": None}
+    safe = {k: sub.get(k) for k in ("plan_key", "plan_name", "cycle", "price", "status", "next_billing_at",
+                                    "paid_until", "created_at")}
+    return {"subscription": safe}
+
+@router.post("/api/billing/cancel")
+def billing_cancel(authorization: Optional[str] = Header(default=None)):
+    claims = current_claims(authorization)
+    if not claims or claims.get("uid") is not None:
+        raise HTTPException(status_code=403, detail="Solo el propietario puede cancelar la suscripción.")
+    try:
+        sub = billing_service.cancel(str(claims["tenant"]))
+    except (ValueError, PayPalError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"subscription": {k: sub.get(k) for k in ("plan_name", "status", "paid_until")}}
+
+@app.post("/api/billing/setup-plans", dependencies=[Depends(require_superadmin)])
+def billing_setup_plans():
+    """Crea (una sola vez) el producto y los planes en PayPal y guarda sus ids en la base."""
+    try:
+        ids = billing_service.setup_plans()
+    except PayPalError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {"ok": True, "plans": {k: v for k, v in ids.items() if not k.startswith("_")}, "mode": billing_service.mode}
 
 # ==============================================================
 # INVITACIONES (RUTAS PÚBLICAS: el enlace lleva un token aleatorio de un solo uso)

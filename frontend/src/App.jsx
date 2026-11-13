@@ -2367,7 +2367,7 @@ function Dashboard({ onLogout }) {
                   </div>
                   <div
                     style={(waStatus.connected || waStatus.status === 'CONNECTED' || stats.wa_connected) ? { color: themeColor } : {}}
-                    className={`mt-2 text-2xl font-semibold ${
+                    className={`mt-2 text-lg sm:text-2xl font-semibold break-words ${
                       waStatus.connected || waStatus.status === 'CONNECTED' || stats.wa_connected
                         ? 'text-[#3ecf8e]'
                         : waStatus.status === 'WAITING_QR'
@@ -2377,7 +2377,7 @@ function Dashboard({ onLogout }) {
                             : 'text-rose-400'
                     }`}
                   >
-                    {waStatus.connected || waStatus.status === 'CONNECTED' || stats.wa_connected ? 'ONLINE' : (waStatus.status || 'OFFLINE')}
+                    {waStatus.connected || waStatus.status === 'CONNECTED' || stats.wa_connected ? 'ONLINE' : String(waStatus.status || 'OFFLINE').replace(/_/g, ' ')}
                   </div>
                   <span className="text-xs text-zinc-400 mt-1 truncate">
                     {waStatus.phone_number || stats.detected_whatsapp_phone || 'Microservicio Baileys'}
@@ -3074,7 +3074,7 @@ function Dashboard({ onLogout }) {
                 />
 
                 {/* Input Bar */}
-                <form onSubmit={handleSendMessage} className="p-4 bg-[#141414] border-t border-[#2e2e2e] flex items-center gap-2">
+                <form onSubmit={handleSendMessage} className="p-2 sm:p-4 bg-[#141414] border-t border-[#2e2e2e] flex items-center gap-1.5 sm:gap-2">
                   {/* Botón Adjuntar Imagen / Comprobante */}
                   <button
                     type="button"
@@ -3119,7 +3119,7 @@ function Dashboard({ onLogout }) {
                         ? 'Grabando audio de voz...'
                         : 'Escribe un mensaje, o prueba enviando una nota de voz / comprobante...'
                     }
-                    className="flex-1 px-3 py-2 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none focus:border-zinc-500"
+                    className="flex-1 min-w-0 px-3 py-2 bg-[#1c1c1c] border border-[#2e2e2e] rounded-md text-sm text-zinc-200 outline-none focus:border-zinc-500"
                   />
 
                   <button
@@ -3128,7 +3128,7 @@ function Dashboard({ onLogout }) {
                     style={{ backgroundColor: themeColor }}
                     className="px-3 py-1.5 text-zinc-950 font-medium rounded-md text-[13px] transition-all disabled:opacity-40 flex items-center gap-2 shrink-0 hover:brightness-110"
                   >
-                    <span>Enviar</span>
+                    <span className="hidden sm:inline">Enviar</span>
                     <Send size={15} />
                   </button>
                 </form>

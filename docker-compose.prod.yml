@@ -65,6 +65,11 @@ services:
       - SMTP_FROM=${SMTP_FROM:-}
       - SMTP_SECURITY=${SMTP_SECURITY:-}
       - SMTP_SECURE=${SMTP_SECURE:-}
+      # Cobro con PayPal (suscripciones). PAYPAL_MODE: sandbox | live
+      - PAYPAL_CLIENT_ID=${PAYPAL_CLIENT_ID:-}
+      - PAYPAL_SECRET=${PAYPAL_SECRET:-}
+      - PAYPAL_MODE=${PAYPAL_MODE:-sandbox}
+      - PAYPAL_WEBHOOK_ID=${PAYPAL_WEBHOOK_ID:-}
       - PUBLIC_BASE_URL=https://${API_DOMAIN}
     volumes:
       - backend_data:/app/data

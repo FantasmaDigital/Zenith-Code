@@ -18,6 +18,7 @@ from services.tenant_service import hash_password, normalize_slug, public_slug, 
 logger = logging.getLogger("asistente_operativo.password_reset")
 
 RESET_TTL_MINUTES = 30
+WELCOME_TTL_HOURS = 72  # enlace del correo de bienvenida tras suscribirse
 MIN_PASSWORD = 8
 
 
@@ -101,7 +102,7 @@ class PasswordResetService:
                 out.append({"tenant": r["tenant"], "user_id": int(r["id"])})
         return out[:5]
 
-    def request(self, email: str, tenant: str = "") -> int:
+    def request(self, email: str, tenant: str = "", welcome: bool = False) -> int:
         """Envía un enlace por cada cuenta con ese correo. Devuelve cuántos (no se informa al público)."""
         self.ensure()
         email = (email or "").strip().lower()
@@ -112,14 +113,25 @@ class PasswordResetService:
             self._run("""INSERT INTO zenith_password_resets (token_hash, tenant, user_id, email, created_at, expires_at)
                          VALUES (?, ?, ?, ?, ?, ?)""",
                       (_hash(token), t["tenant"], t["user_id"], email, _iso(now),
-                       _iso(now + timedelta(minutes=RESET_TTL_MINUTES))))
+                       _iso(now + (timedelta(hours=WELCOME_TTL_HOURS) if welcome
+                                   else timedelta(minutes=RESET_TTL_MINUTES)))))
             company = (tenant_registry.get(t["tenant"]) or {}).get("name") or t["tenant"]
-            link = f"{panel_base_url()}/auth/{public_slug(t['tenant'])}?restablecer={token}"
-            send_in_background(
-                email, f"Restablece tu contraseña de {company}",
-                f"Hola,\n\nPediste restablecer la contraseña de tu acceso a {company} en Zenith.\n\n"
-                f"Crea una nueva aquí (el enlace vence en {RESET_TTL_MINUTES} minutos y sirve una sola vez):\n"
-                f"{link}\n\nSi no lo pediste, ignora este correo: tu contraseña no cambia.\n")
+            slug = public_slug(t["tenant"])
+            link = f"{panel_base_url()}/auth/{slug}?restablecer={token}"
+            if welcome:
+                send_in_background(
+                    email, f"Bienvenido a Zenith: activa el acceso de {company}",
+                    f"Hola,\n\nTu suscripción a Zenith está activa y {company} ya tiene su panel.\n\n"
+                    f"1. Crea tu contraseña aquí (el enlace vence en {WELCOME_TTL_HOURS} horas):\n{link}\n\n"
+                    f"2. Después entra siempre en {panel_base_url()}/auth/{slug} con este correo.\n\n"
+                    "3. Conecta tu WhatsApp desde el panel (sección WhatsApp) y carga tu información.\n\n"
+                    f"Tienes {14} días de prueba gratis. Si necesitas ayuda, responde a este correo.\n")
+            else:
+                send_in_background(
+                    email, f"Restablece tu contraseña de {company}",
+                    f"Hola,\n\nPediste restablecer la contraseña de tu acceso a {company} en Zenith.\n\n"
+                    f"Crea una nueva aquí (el enlace vence en {RESET_TTL_MINUTES} minutos y sirve una sola vez):\n"
+                    f"{link}\n\nSi no lo pediste, ignora este correo: tu contraseña no cambia.\n")
         if targets:
             logger.info(f"🔑 Enlace de recuperación generado para {len(targets)} cuenta(s).")
         return len(targets)

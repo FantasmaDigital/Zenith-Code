@@ -18,6 +18,14 @@ from services.tenant_service import DEFAULT_TENANT, tenant_context, tenant_regis
 from services.user_service import user_service
 
 
+def _reset_platform_tables():
+    """Las tablas de recuperación y suscripciones viven en la base temporal de cada clase: recrearlas."""
+    from services.billing_service import billing_service
+    from services.password_reset_service import password_reset_service
+    billing_service._ready = False
+    password_reset_service._ready = False
+
+
 class TenantTestCase(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -33,6 +41,7 @@ class TenantTestCase(unittest.TestCase):
         tenant_registry._pv_cache.clear()
         # Las tablas de usuarios viven en la misma BD: hay que recrearlas en la temporal
         user_service._ready = False
+        _reset_platform_tables()
         user_service._ver_cache.clear()
         customer_service._db = db_service
         customer_service._ready_tenants = set()
@@ -47,6 +56,7 @@ class TenantTestCase(unittest.TestCase):
         tenant_registry._cache.clear()
         tenant_registry._pv_cache.clear()
         user_service._ready = False
+        _reset_platform_tables()
         user_service._ver_cache.clear()
         settings.invalidate(DEFAULT_TENANT)
         shutil.rmtree(cls.tmp, ignore_errors=True)

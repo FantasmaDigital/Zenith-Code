@@ -163,6 +163,20 @@ class ServicesModule(ZenithModule):
             if warranty_days:
                 lines.append(f"Garantía y soporte post-entrega: {warranty_days} días de garantía incluidos.")
 
+            work_days = (cfg.get("work_days") or "").strip()
+            work_hours = (cfg.get("work_hours") or "").strip()
+            out_of_hours_msg = (cfg.get("out_of_hours_msg") or "").strip()
+            if work_days or work_hours:
+                tz = (cfg.get("timezone") or "").strip()
+                lines.append(
+                    "\n[HORARIO DE ATENCIÓN OFICIAL]\n"
+                    f"Días: {work_days or 'no especificados'}\n"
+                    f"Horas: {work_hours or 'no especificadas'}" + (f" ({tz})" if tz else "") + "\n"
+                    "Cuando pregunten por el horario, responde EXACTAMENTE con estos datos."
+                )
+                if out_of_hours_msg:
+                    lines.append(f"Si el cliente escribe fuera de horario, comunica: \"{out_of_hours_msg}\"")
+
             if meeting_link:
                 lines.append(
                     f"\n[AGENDAMIENTO DE REUNIONES O DEMOS]\n"
@@ -224,6 +238,16 @@ class ServicesModule(ZenithModule):
             clients_total = stats.get("clients_total", 0)
 
             lines = ["\n[CONTEXTO EN TIEMPO REAL - SERVICIOS]"]
+            try:
+                from datetime import datetime
+                from zoneinfo import ZoneInfo
+                cfg = prof_services_service.get_config()
+                now = datetime.now(ZoneInfo(cfg.get("timezone") or "America/El_Salvador"))
+                dias = ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"]
+                lines.append(f"🕒 Fecha y hora actual: {dias[now.weekday()]} {now:%d/%m/%Y %H:%M}. "
+                             "Compárala con el horario de atención oficial para saber si estamos en horario.")
+            except Exception:
+                pass
             if leads_nuevos > 0:
                 lines.append(f"⚠️ Leads nuevos sin contactar: {leads_nuevos}")
             lines.append(f"💼 Clientes activos: {clients_total}")

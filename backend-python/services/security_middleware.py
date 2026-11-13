@@ -20,6 +20,8 @@ DEFAULT_RULES: List[Tuple[str, int, int]] = [
     ("/api/auth/password", 10, 60),
     # Recuperación de contraseña: pocos correos por IP para no usarla como cañón de spam
     ("/api/public/password-reset/request", 5, 600),
+    ("/api/public/billing/activate", 10, 600),
+    ("/webhook/paypal", 300, 60),
     ("/api/public/", 120, 60),
     ("/webhook/meta", 600, 60),
 ]

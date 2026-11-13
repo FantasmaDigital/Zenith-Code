@@ -129,6 +129,69 @@ function OwnerAccessCard({ apiFetch, apiBase, showToast, onToken }) {
   );
 }
 
+const SUB_STATUS = {
+  APPROVAL_PENDING: 'Pendiente de aprobación', APPROVED: 'Aprobada', ACTIVE: 'Activa',
+  SUSPENDED: 'Suspendida (pago fallido)', CANCELLED: 'Cancelada', EXPIRED: 'Vencida'
+};
+const fmtDay = (iso) => {
+  if (!iso) return '—';
+  try { return new Date(iso).toLocaleDateString('es', { dateStyle: 'long' }); } catch { return iso; }
+};
+
+// Suscripción de la empresa (PayPal). Solo se muestra si la empresa se dio de alta con un plan.
+function BillingCard({ apiFetch, apiBase, showToast }) {
+  const [sub, setSub] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    apiFetch(`${apiBase}/api/billing/me`).then(r => (r.ok ? r.json() : null))
+      .then(d => setSub(d?.subscription || null)).catch(() => {});
+  }, [apiFetch, apiBase]);
+
+  if (!sub) return null;
+  const active = ['ACTIVE', 'APPROVED', 'APPROVAL_PENDING'].includes(sub.status);
+
+  const cancel = async () => {
+    if (!window.confirm('¿Cancelar la suscripción? Conservas el acceso hasta el final del periodo pagado; luego el panel se pausa.')) return;
+    setBusy(true); setError('');
+    try {
+      const res = await apiFetch(`${apiBase}/api/billing/cancel`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) { setError(typeof data.detail === 'string' ? data.detail : 'No se pudo cancelar.'); return; }
+      setSub(s => ({ ...s, ...data.subscription }));
+      showToast?.('Suscripción cancelada');
+    } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="bg-[#171717] border border-[#2e2e2e] rounded-lg p-5 space-y-3">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-medium text-zinc-100">Suscripción</h3>
+          <p className="text-[12px] text-zinc-400 mt-1">Cobro automático con PayPal.</p>
+        </div>
+        <span className={`text-[11px] font-medium border rounded-full px-2 py-0.5 ${active ? 'text-emerald-300 bg-emerald-500/10 border-emerald-500/25' : 'text-amber-300 bg-amber-500/10 border-amber-500/25'}`}>
+          {SUB_STATUS[sub.status] || sub.status}
+        </span>
+      </div>
+      <dl className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-[13px]">
+        <div><dt className="text-zinc-500">Plan</dt><dd className="text-zinc-100">{sub.plan_name}</dd></div>
+        <div><dt className="text-zinc-500">Ciclo</dt><dd className="text-zinc-100">{sub.cycle === 'yearly' ? 'Anual' : 'Mensual'}{sub.price ? ` · $${sub.price}` : ''}</dd></div>
+        <div><dt className="text-zinc-500">{active ? 'Próximo cobro' : 'Acceso hasta'}</dt><dd className="text-zinc-100">{fmtDay(active ? sub.next_billing_at : sub.paid_until)}</dd></div>
+        <div><dt className="text-zinc-500">Desde</dt><dd className="text-zinc-100">{fmtDay(sub.created_at)}</dd></div>
+      </dl>
+      {error && <p className="text-[12px] text-rose-400">{error}</p>}
+      {active && (
+        <button onClick={cancel} disabled={busy}
+          className="h-9 px-4 rounded-md text-[13px] font-medium border border-rose-500/30 text-rose-300 hover:bg-rose-500/10 disabled:opacity-50">
+          {busy ? 'Cancelando…' : 'Cancelar suscripción'}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export default function UsersPanel({ apiFetch, apiBase, themeColor = '#3ecf8e', showToast, currentUserId, showOwnerAccess = false, onOwnerToken }) {
   const [data, setData] = useState({ users: [], invitations: [], roles: [], channels: null });
   const [loading, setLoading] = useState(true);
@@ -226,6 +289,7 @@ export default function UsersPanel({ apiFetch, apiBase, themeColor = '#3ecf8e', 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       {showOwnerAccess && <OwnerAccessCard apiFetch={apiFetch} apiBase={apiBase} showToast={showToast} onToken={onOwnerToken} />}
+      {showOwnerAccess && <BillingCard apiFetch={apiFetch} apiBase={apiBase} showToast={showToast} />}
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-xl font-medium text-zinc-100 flex items-center gap-2"><Users size={20} /> Usuarios</h2>
