@@ -20,8 +20,12 @@ const { forwardToPythonBackend } = require('../bridge/pythonBridge');
 const SLUG_RE = /^[a-z0-9][a-z0-9-]{0,38}[a-z0-9]$/;
 
 function normalizeTenant(raw) {
-  const slug = (raw || 'default').toString().trim().toLowerCase();
-  return slug || 'default';
+  const slug = (raw || 'default').toString().trim().toLowerCase() || 'default';
+  // El backend llama a su empresa principal «default». Si este gateway se configuró con su slug
+  // (TENANT_ID=fantasma-digital), «default» es esa misma sesión y no una distinta sin vincular.
+  const main = (config.tenantId || 'default').trim().toLowerCase();
+  if (slug === 'default' && main !== 'default') return main;
+  return slug;
 }
 
 function isValidTenant(slug) {
@@ -576,7 +580,12 @@ class SessionManager {
    * Antes solo se abría la principal y las demás quedaban sin responder hasta que alguien abría su panel.
    */
   restoreAll() {
-    this.initDefault();
+    const main = this.initDefault();
+    if (!fs.existsSync(path.join(main.authFolder, 'creds.json'))) {
+      // Si el número ya estaba vinculado y aun así pide QR tras reiniciar, la carpeta no es persistente
+      console.warn(`[SessionManager] ⚠️ No hay credenciales guardadas en ${main.authFolder}. ` +
+        'Si ya habías vinculado WhatsApp, monta un volumen persistente en AUTH_FOLDER o se perderá en cada reinicio.');
+    }
     const tenantsDir = path.join(config.authFolder, 'tenants');
     let entries = [];
     try {
