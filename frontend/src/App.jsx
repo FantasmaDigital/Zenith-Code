@@ -1878,7 +1878,7 @@ function Dashboard({ onLogout }) {
                 <img
                   src={stats.company_logo}
                   alt={stats.company}
-                  className="w-8 h-8 rounded-md object-contain bg-zinc-900 border border-[#2e2e2e] p-0.5 shrink-0"
+                  className="h-8 w-auto max-w-[96px] object-contain shrink-0"
                 />
               ) : (
                 <div
@@ -5364,7 +5364,7 @@ function LoginScreen({ onLogin }) {
       <main className="w-full max-w-[380px]">
         <div className="flex flex-col items-center text-center mb-8">
           {brand?.logo ? (
-            <img src={brand.logo} alt={company} className="h-14 w-14 rounded-xl object-contain bg-[#1c1c1c] border border-[#2e2e2e] p-1.5" />
+            <img src={brand.logo} alt={company} className="h-16 w-auto max-w-[220px] object-contain drop-shadow-[0_4px_24px_rgba(0,0,0,0.45)]" />
           ) : (
             <div
               className="h-14 w-14 rounded-xl flex items-center justify-center text-2xl font-semibold"
@@ -5588,7 +5588,7 @@ function AcceptInviteScreen({ token, onDone }) {
       <main className="w-full max-w-[400px]">
         <div className="flex flex-col items-center text-center mb-8">
           {brand.logo ? (
-            <img src={brand.logo} alt={company} className="h-14 w-14 rounded-xl object-contain bg-[#1c1c1c] border border-[#2e2e2e] p-1.5" />
+            <img src={brand.logo} alt={company} className="h-16 w-auto max-w-[220px] object-contain drop-shadow-[0_4px_24px_rgba(0,0,0,0.45)]" />
           ) : (
             <div className="h-14 w-14 rounded-xl flex items-center justify-center text-2xl font-semibold"
               style={{ backgroundColor: color, color: readableTextOn(color) }} aria-hidden="true">
