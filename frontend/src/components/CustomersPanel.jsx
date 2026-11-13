@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowLeft, Brain, MessageSquare, Phone, RefreshCw, Search, ShoppingBag, Sparkles, X } from 'lucide-react';
+import { ArrowLeft, Brain, MessageSquare, Pencil, Phone, Plus, RefreshCw, Search, ShoppingBag, Sparkles, Trash2, X } from 'lucide-react';
 
 const STAGES = [
   ['new', 'Nuevo'], ['interested', 'Interesado'], ['customer', 'Cliente'], ['loyal', 'Frecuente'], ['lost', 'Perdido']
@@ -200,6 +200,8 @@ function CustomerDetail({ apiFetch, apiBase, customerId, onBack, toast, themeCol
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
+  const [memDraft, setMemDraft] = useState(null); // { summary, facts } mientras se edita la memoria
+  const [memSaving, setMemSaving] = useState(false);
   const [messages, setMessages] = useState([]);
   const [hasMore, setHasMore] = useState(false);
   const scrollRef = useRef(null);
@@ -254,6 +256,27 @@ function CustomerDetail({ apiFetch, apiBase, customerId, onBack, toast, themeCol
     }
   };
 
+  const patchMemory = async (body) => {
+    setMemSaving(true);
+    try {
+      const res = await apiFetch(`${apiBase}/api/customers/${customerId}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body)
+      });
+      if (!res.ok) throw new Error(await errorText(res, 'No se pudo guardar la memoria.'));
+      setC((await res.json()).customer);
+      setMemDraft(null);
+      toast('Memoria guardada');
+    } catch (e) {
+      toast(e.message, true);
+    } finally {
+      setMemSaving(false);
+    }
+  };
+  const saveMemory = () => patchMemory({
+    summary: memDraft.summary, facts: memDraft.facts.map(f => f.trim()).filter(Boolean)
+  });
+  const removeFact = (i) => patchMemory({ facts: (c.facts || []).filter((_, j) => j !== i) });
+
   const refreshSummary = async () => {
     setRefreshing(true);
     try {
@@ -304,21 +327,61 @@ function CustomerDetail({ apiFetch, apiBase, customerId, onBack, toast, themeCol
           <section className="p-4 bg-[#171717] border border-[#2e2e2e] rounded-md space-y-3">
             <div className="flex items-center justify-between">
               <h2 className="flex items-center gap-1.5 text-[13px] font-medium text-zinc-100"><Brain size={14} style={{ color: themeColor }} /> Memoria del agente</h2>
-              <button onClick={refreshSummary} disabled={refreshing || c.message_count === 0} className="inline-flex items-center gap-1 text-[12px] text-zinc-400 hover:text-zinc-100 disabled:opacity-40">
-                <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} /> Actualizar
-              </button>
+              {!memDraft && (
+                <div className="flex items-center gap-3">
+                  <button onClick={() => setMemDraft({ summary: c.summary || '', facts: [...(c.facts || [])] })} className="inline-flex items-center gap-1 text-[12px] text-zinc-400 hover:text-zinc-100">
+                    <Pencil size={12} /> Editar
+                  </button>
+                  <button onClick={refreshSummary} disabled={refreshing || c.message_count === 0} className="inline-flex items-center gap-1 text-[12px] text-zinc-400 hover:text-zinc-100 disabled:opacity-40">
+                    <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} /> Actualizar
+                  </button>
+                </div>
+              )}
             </div>
-            {c.summary ? (
-              <p className="text-[13px] text-zinc-300 leading-relaxed">{c.summary}</p>
+            {memDraft ? (
+              <div className="space-y-2">
+                <textarea className={`${inputClass} min-h-[96px] resize-y`} value={memDraft.summary} maxLength={1200}
+                  onChange={e => setMemDraft({ ...memDraft, summary: e.target.value })} placeholder="Resumen del cliente" />
+                <ul className="space-y-1.5">
+                  {memDraft.facts.map((f, i) => (
+                    <li key={i} className="flex items-center gap-1.5">
+                      <input className={inputClass} value={f} maxLength={160}
+                        onChange={e => setMemDraft({ ...memDraft, facts: memDraft.facts.map((x, j) => j === i ? e.target.value : x) })} />
+                      <button onClick={() => setMemDraft({ ...memDraft, facts: memDraft.facts.filter((_, j) => j !== i) })}
+                        className="p-1.5 rounded-md text-zinc-500 hover:text-rose-300 hover:bg-[#232323]" aria-label="Quitar dato"><Trash2 size={13} /></button>
+                    </li>
+                  ))}
+                </ul>
+                {memDraft.facts.length < 12 && (
+                  <button onClick={() => setMemDraft({ ...memDraft, facts: [...memDraft.facts, ''] })}
+                    className="inline-flex items-center gap-1 text-[12px] text-zinc-400 hover:text-zinc-100"><Plus size={12} /> Agregar dato</button>
+                )}
+                <p className="text-[11px] text-zinc-500">Lo que quites no lo volverá a agregar la IA al actualizar la memoria.</p>
+                <div className="flex justify-end gap-2">
+                  <button onClick={() => setMemDraft(null)} disabled={memSaving} className="px-3 py-1.5 rounded-md text-[12px] text-zinc-300 hover:bg-[#232323]">Cancelar</button>
+                  <button onClick={saveMemory} disabled={memSaving} className="px-3 py-1.5 rounded-md text-[12px] font-medium text-black disabled:opacity-40" style={{ backgroundColor: themeColor }}>
+                    {memSaving ? 'Guardando…' : 'Guardar memoria'}
+                  </button>
+                </div>
+              </div>
             ) : (
-              <p className="text-[13px] text-zinc-500">La IA arma el resumen tras los primeros mensajes y lo actualiza sola cada pocos mensajes.</p>
-            )}
-            {c.facts?.length > 0 && (
-              <ul className="space-y-1">
-                {c.facts.map((f, i) => (
-                  <li key={i} className="flex gap-2 text-[13px] text-zinc-300"><Sparkles size={12} className="mt-1 shrink-0 text-zinc-500" />{f}</li>
-                ))}
-              </ul>
+              <>
+                {c.summary ? (
+                  <p className="text-[13px] text-zinc-300 leading-relaxed">{c.summary}</p>
+                ) : (
+                  <p className="text-[13px] text-zinc-500">La IA arma el resumen tras los primeros mensajes y lo actualiza sola cada pocos mensajes.</p>
+                )}
+                {c.facts?.length > 0 && (
+                  <ul className="space-y-1">
+                    {c.facts.map((f, i) => (
+                      <li key={i} className="group flex gap-2 text-[13px] text-zinc-300">
+                        <Sparkles size={12} className="mt-1 shrink-0 text-zinc-500" /><span className="flex-1">{f}</span>
+                        <button onClick={() => removeFact(i)} className="opacity-0 group-hover:opacity-100 focus:opacity-100 p-0.5 h-fit rounded text-zinc-500 hover:text-rose-300" aria-label={`Quitar «${f}»`}><X size={12} /></button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </>
             )}
             <p className="text-[11px] text-zinc-500">
               {c.summary_updated_at ? `Actualizada ${relative(c.summary_updated_at)}. ` : ''}El agente usa esta memoria para atender a este cliente de forma personalizada.

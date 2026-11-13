@@ -263,6 +263,8 @@ class ModuleRegistry:
         """Concatena el contexto en vivo de los módulos activos."""
         parts = []
         for module_id, instance in self._loaded.items():
+            if not self.in_plan(instance.manifest):
+                continue
             try:
                 text = (instance.get_live_context() or "").strip()
                 if text:
@@ -274,6 +276,8 @@ class ModuleRegistry:
     def get_welcome_override(self) -> Dict[str, str]:
         """Primer saludo no vacío definido por un módulo activo: {"module": id, "name": nombre, "text": saludo}."""
         for module_id, instance in self._loaded.items():
+            if not self.in_plan(instance.manifest):
+                continue
             try:
                 text = (instance.get_welcome_override() or "").strip()
             except Exception as e:
@@ -295,6 +299,9 @@ class ModuleRegistry:
         """Concatena las extensiones de prompt de todos los módulos instalados activos."""
         extensions = []
         for instance in self._loaded.values():
+            # Solo módulos del plan de la empresa: antes el horario del restaurante se colaba en otras empresas
+            if not self.in_plan(instance.manifest):
+                continue
             try:
                 ext = instance.get_prompt_extension()
                 if ext and ext.strip():

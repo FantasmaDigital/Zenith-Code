@@ -28,6 +28,21 @@ SUMMARY_FIRST_AFTER = 4         # primer resumen tras 4 mensajes
 SUMMARY_EVERY = 8               # luego, cada 8 mensajes nuevos
 SUMMARY_WINDOW = 40             # mensajes que el resumidor lee
 MAX_FACTS = 12
+
+# Datos del NEGOCIO que cambian (horarios, precios, promociones, stock): nunca van a la memoria del cliente,
+# la IA los toma en vivo de la configuración. El presupuesto del cliente sí es un dato suyo y se conserva.
+_VOLATILE_RE = re.compile(
+    r"horario|hora(s)? de (atenci[oó]n|apertura|cierre)|abre(n)? (a las|de)|cierra(n)? (a las|de)|"
+    r"\d{1,2}(:\d{2})?\s*(am|pm|a\.\s?m\.|p\.\s?m\.)?\s*(a|-|–|hasta)\s*\d{1,2}(:\d{2})?\s*(am|pm|a\.\s?m\.|p\.\s?m\.)|"
+    r"precio|tarifa|cuesta|costo|vale \$|promoci[oó]n|descuento|oferta|stock|disponibilidad del men[uú]",
+    re.IGNORECASE)
+
+
+def is_volatile_business_fact(text: Any) -> bool:
+    t = str(text or "")
+    if re.search(r"presupuesto", t, re.IGNORECASE):
+        return False
+    return bool(_VOLATILE_RE.search(t))
 MAX_TAGS = 15
 
 
@@ -126,6 +141,9 @@ class CustomerService(TenantReadyMixin):
                     run(f"ALTER TABLE customers ADD COLUMN {col} VARCHAR(40)")  # área que atiende el chat
             if "avatar_url" not in cols:
                 run("ALTER TABLE customers ADD COLUMN avatar_url TEXT")  # foto de perfil de WhatsApp
+            if "removed_facts" not in cols:
+                # Datos que el equipo borró a mano de la memoria: la IA no debe volver a agregarlos
+                run("ALTER TABLE customers ADD COLUMN removed_facts TEXT DEFAULT '[]'")
             # Chats de WhatsApp con ID «@lid» que se guardaron como «web» antes de reconocerlos
             run("UPDATE customers SET channel = 'whatsapp' WHERE channel = 'web' AND session_id LIKE ?", ("%@lid",))
         self._ready = True
@@ -139,7 +157,7 @@ class CustomerService(TenantReadyMixin):
     def _decode(c: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if not c:
             return c
-        for key in ("tags", "facts"):
+        for key in ("tags", "facts", "removed_facts"):
             try:
                 c[key] = json.loads(c.get(key) or "[]")
             except (TypeError, ValueError):
@@ -374,10 +392,32 @@ class CustomerService(TenantReadyMixin):
         return out[:limit]
 
     def update(self, customer_id: int, name: Optional[str] = None, phone: Optional[str] = None,
-               tags: Optional[List[str]] = None, notes: Optional[str] = None, stage: Optional[str] = None) -> Optional[Dict[str, Any]]:
+               tags: Optional[List[str]] = None, notes: Optional[str] = None, stage: Optional[str] = None,
+               summary: Optional[str] = None, facts: Optional[List[str]] = None) -> Optional[Dict[str, Any]]:
         """Edición manual desde el panel. Si una persona fija la etapa, la IA deja de cambiarla."""
         self._ensure()
         sets, params = [], []
+        if summary is not None:
+            sets.append("summary = ?")
+            params.append(summary.strip()[:1200])
+        if facts is not None:
+            current = self.get(customer_id)
+            if not current:
+                return None
+            new_facts = []
+            for f in facts:
+                f = re.sub(r"s+", " ", str(f)).strip()[:160]
+                if f and f.lower() not in [x.lower() for x in new_facts]:
+                    new_facts.append(f)
+            new_facts = new_facts[:MAX_FACTS]
+            kept = {f.lower() for f in new_facts}
+            # Lo que el equipo quita queda bloqueado para que el resumen automático no lo vuelva a agregar
+            blocked = [f for f in (current.get("removed_facts") or []) if f.lower() not in kept]
+            for f in current.get("facts") or []:
+                if f.lower() not in kept and f.lower() not in [b.lower() for b in blocked]:
+                    blocked.append(f)
+            sets += ["facts = ?", "removed_facts = ?"]
+            params += [json.dumps(new_facts, ensure_ascii=False), json.dumps(blocked[-30:], ensure_ascii=False)]
         if name is not None:
             sets.append("name = ?")
             params.append(name.strip()[:120] or None)
@@ -462,8 +502,10 @@ class CustomerService(TenantReadyMixin):
                          + (f"; el último fue: {last['items']}." if last and last.get("items") else "."))
         if c.get("summary"):
             parts.append(f"Resumen: {c['summary']}")
-        if c.get("facts"):
-            parts.append("Datos clave: " + "; ".join(c["facts"]) + ".")
+        # Las fichas viejas pueden traer horarios o precios: nunca se le pasan a la IA
+        facts = [f for f in (c.get("facts") or []) if not is_volatile_business_fact(f)]
+        if facts:
+            parts.append("Datos clave: " + "; ".join(facts) + ".")
         if c.get("notes"):
             parts.append(f"Notas del equipo: {c['notes'][:300]}")
         if len(parts) <= 1:
@@ -524,7 +566,10 @@ class CustomerService(TenantReadyMixin):
         if not result:
             return c
 
-        facts = [str(f).strip()[:160] for f in (result.get("facts") or []) if str(f).strip()][:MAX_FACTS]
+        blocked = {str(b).strip().lower() for b in (c.get("removed_facts") or [])}
+        facts = [str(f).strip()[:160] for f in (result.get("facts") or [])
+                 if str(f).strip() and not is_volatile_business_fact(str(f))
+                 and str(f).strip()[:160].lower() not in blocked][:MAX_FACTS]
         tags = self._norm_tags(list(c.get("tags") or []) + list(result.get("tags") or []))
         stage = result.get("stage") if result.get("stage") in STAGES else c["stage"]
         if c["stage_locked"]:
@@ -545,12 +590,19 @@ class CustomerService(TenantReadyMixin):
             "Responde SOLO un JSON con: "
             '"summary" (2-3 oraciones: quién es, qué busca o compra, estado actual), '
             '"facts" (lista de hasta 10 datos útiles y estables para atenderlo mejor: preferencias, restricciones, '
-            'dirección o zona habitual, forma de pago preferida, fechas importantes; nada inventado), '
+            'dirección o zona habitual, forma de pago preferida, fechas importantes; nada inventado. '
+            'SOLO datos del CLIENTE, nunca del negocio: PROHIBIDO guardar horarios de atención, precios, tarifas, '
+            'costos, promociones, descuentos, stock, menú o catálogo, porque cambian y la IA los consulta en vivo), '
+            '"summary" tampoco debe mencionar horarios ni precios del negocio, '
             '"name" (su nombre si lo dijo, o null), '
             f'"stage" (uno de: {", ".join(STAGES)}; new=solo saludó, interested=pregunta o cotiza, customer=ya compró, '
             'loyal=compra seguido, lost=se quejó o dijo que no volverá), '
             '"tags" (hasta 3 etiquetas cortas en minúsculas, p. ej. "domicilio", "vegetariano", "mayorista").\n\n'
-            f"Ficha actual: resumen={c.get('summary') or '-'}; datos={c.get('facts') or []}; etapa={c.get('stage')}.\n\n"
+            f"Ficha actual: resumen={c.get('summary') or '-'}; "
+            f"datos={[f for f in (c.get('facts') or []) if not is_volatile_business_fact(f)]}; etapa={c.get('stage')}.\n"
+            + (f"El equipo BORRÓ a mano estos datos por incorrectos o irrelevantes; no los vuelvas a incluir "
+               f"ni nada equivalente: {c.get('removed_facts')}.\n" if c.get('removed_facts') else "")
+            + "La ficha actual pudo ser corregida por el equipo: respeta esas correcciones.\n\n"
             f"Conversación (más reciente al final):\n{transcript}\n\nJSON:"
         )
 

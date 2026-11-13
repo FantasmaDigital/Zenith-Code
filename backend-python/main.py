@@ -1275,6 +1275,9 @@ class CustomerUpdate(BaseModel):
     tags: Optional[list[str]] = Field(None, max_length=15)
     notes: Optional[str] = Field(None, max_length=4000)
     stage: Optional[str] = Field(None, pattern="^(new|interested|customer|loyal|lost)$")
+    # Memoria del agente editable desde el panel
+    summary: Optional[str] = Field(None, max_length=1200)
+    facts: Optional[list[str]] = Field(None, max_length=12)
 
 
 @arm_router.get("/api/customers")
